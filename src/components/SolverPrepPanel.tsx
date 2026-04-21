@@ -1,5 +1,13 @@
 export function SolverPrepPanel({ editor }: any) {
-  const { solverPrepSummary, solverPrepGraph, firstPassSolution } = editor;
+  const {
+    solverPrepSummary,
+    solverPrepGraph,
+    firstPassSolution,
+    selectedTraceLoadId,
+    onSelectTraceLoad
+  } = editor;
+
+  const loadSummaries = firstPassSolution.load_path_summaries || [];
 
   return (
     <div style={{ border: "1px solid #ddd", borderRadius: 8, padding: 12, background: "#fff", marginTop: 16 }}>
@@ -13,9 +21,25 @@ export function SolverPrepPanel({ editor }: any) {
       </div>
 
       <div style={{ marginBottom: 10 }}>
+        <div style={{ fontWeight: "bold", marginBottom: 6 }}>Trace a load path</div>
+        <select
+          value={selectedTraceLoadId || ""}
+          onChange={(e) => onSelectTraceLoad(e.target.value || null)}
+          style={{ width: "100%" }}
+        >
+          <option value="">No trace selected</option>
+          {loadSummaries.map((summary: any) => (
+            <option key={summary.component_id} value={summary.component_id}>
+              {summary.component_id} · {summary.load_current_a} A
+            </option>
+          ))}
+        </select>
+      </div>
+
+      <div style={{ marginBottom: 10 }}>
         <div style={{ fontWeight: "bold" }}>First-pass path solution</div>
         <div>Sources tracked: {(firstPassSolution.source_summaries || []).length}</div>
-        <div>Loads traced: {(firstPassSolution.load_path_summaries || []).length}</div>
+        <div>Loads traced: {loadSummaries.length}</div>
       </div>
 
       <details>
@@ -31,7 +55,7 @@ export function SolverPrepPanel({ editor }: any) {
             fontSize: 12
           }}
         >
-{JSON.stringify(firstPassSolution.load_path_summaries, null, 2)}
+{JSON.stringify(loadSummaries, null, 2)}
         </pre>
       </details>
 

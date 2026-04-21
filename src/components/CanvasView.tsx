@@ -58,13 +58,15 @@ export function CanvasView({ editor }: any) {
     selectedComponentId,
     setSelectedComponentId,
     selectedWireId,
-    setSelectedWireId,
+    selectedNetId,
+    traceWireIdSet,
+    viewMode,
     wireStartTerminalId,
     draggingComponentId,
     setDraggingComponentId,
     moveComponentTo,
-    highlightNetId,
-    setHighlightNetId,
+    onSelectWire,
+    onSelectNet,
     showWireLabels,
     snapToGrid,
     zoom
@@ -127,20 +129,43 @@ export function CanvasView({ editor }: any) {
               const a = getTerminalPosition(fromComp, fromTerminal);
               const b = getTerminalPosition(toComp, toTerminal);
 
-              const highlight =
-                highlightNetId &&
-                (fromTerminal.net_id === highlightNetId || toTerminal.net_id === highlightNetId);
+              const wireSelected = selectedWireId === w.id;
+              const wireNetSelected =
+                viewMode === "net" &&
+                selectedNetId &&
+                (fromTerminal.net_id === selectedNetId || toTerminal.net_id === selectedNetId);
+
+              const wireTraceSelected =
+                viewMode === "trace" &&
+                traceWireIdSet.has(w.id);
+
+              const isHighlighted = wireSelected || wireNetSelected || wireTraceSelected;
+              const shouldFade =
+                (viewMode === "net" && !wireSelected && !wireNetSelected) ||
+                (viewMode === "trace" && !wireSelected && !wireTraceSelected);
 
               return (
-                <g key={w.id} onClick={() => setSelectedWireId(w.id)} style={{ cursor: "pointer" }}>
+                <g key={w.id} onClick={() => onSelectWire(w.id)} style={{ cursor: "pointer" }}>
                   <path
                     d={orthogonalPath(a, b)}
                     fill="none"
-                    stroke={highlight ? "#2563eb" : wireColor(w.attribution?.wire_color || "yellow")}
-                    strokeWidth={selectedWireId === w.id ? 5 : highlight ? 4 : 3}
+                    stroke={
+                      wireSelected
+                        ? "#2563eb"
+                        : wireTraceSelected
+                        ? "#16a34a"
+                        : wireColor(w.attribution?.wire_color || "yellow")
+                    }
+                    strokeWidth={wireSelected ? 5 : isHighlighted ? 4 : 3}
+                    opacity={shouldFade ? 0.22 : 1}
                   />
                   {showWireLabels && (
-                    <text x={(a.x + b.x) / 2} y={Math.min(a.y, b.y) - 8} fontSize="12">
+                    <text
+                      x={(a.x + b.x) / 2}
+                      y={Math.min(a.y, b.y) - 8}
+                      fontSize="12"
+                      opacity={shouldFade ? 0.3 : 1}
+                    >
                       {w.id}
                     </text>
                   )}
@@ -149,8 +174,23 @@ export function CanvasView({ editor }: any) {
             })}
 
             {model.components.map((c: any) => {
-              const componentHighlighted =
-                highlightNetId && c.terminals.some((t: any) => t.net_id === highlightNetId);
+              const componentOnSelectedNet =
+                viewMode === "net" &&
+                selectedNetId &&
+                c.terminals.some((t: any) => t.net_id === selectedNetId);
+
+              const componentOnTrace =
+                viewMode === "trace" &&
+                c.terminals.some((t: any) =>
+                  Array.from(traceWireIdSet).some((wireId) => {
+                    const wire = model.wires.find((w: any) => w.id === wireId);
+                    return wire && (wire.from_terminal === t.id || wire.to_terminal === t.id);
+                  })
+                );
+
+              const shouldFade =
+                (viewMode === "net" && !componentOnSelectedNet) ||
+                (viewMode === "trace" && !componentOnTrace);
 
               return (
                 <g key={c.id}>
@@ -164,32 +204,35 @@ export function CanvasView({ editor }: any) {
                     stroke={
                       selectedComponentId === c.id
                         ? "#2563eb"
-                        : componentHighlighted
+                        : componentOnTrace
+                        ? "#16a34a"
+                        : componentOnSelectedNet
                         ? "#7c3aed"
                         : "#94a3b8"
                     }
                     strokeWidth="2"
+                    opacity={shouldFade ? 0.35 : 1}
                     onClick={() => setSelectedComponentId(c.id)}
                     onMouseDown={() => setDraggingComponentId(c.id)}
                     style={{ cursor: "move" }}
                   />
-                  <text x={c.x} y={c.y - 4} textAnchor="middle" fontSize="14" fontWeight="bold">
+                  <text x={c.x} y={c.y - 4} textAnchor="middle" fontSize="14" fontWeight="bold" opacity={shouldFade ? 0.35 : 1}>
                     {c.label}
                   </text>
-                  <text x={c.x} y={c.y + 14} textAnchor="middle" fontSize="11">
+                  <text x={c.x} y={c.y + 14} textAnchor="middle" fontSize="11" opacity={shouldFade ? 0.35 : 1}>
                     {c.id}
                   </text>
 
                   {c.terminals.map((t: any) => {
                     const p = getTerminalPosition(c, t);
                     const active = wireStartTerminalId === t.id;
-                    const netHighlighted = highlightNetId === t.net_id;
+                    const terminalNetSelected = viewMode === "net" && selectedNetId === t.net_id;
 
                     return (
                       <g
                         key={t.id}
                         onClick={() => {
-                          setHighlightNetId(t.net_id);
+                          onSelectNet(t.net_id);
                           handleTerminalClick(t.id);
                         }}
                         style={{ cursor: "pointer" }}
@@ -198,11 +241,12 @@ export function CanvasView({ editor }: any) {
                           cx={p.x}
                           cy={p.y}
                           r="7"
-                          fill={netHighlighted ? "#2563eb" : String(t.role).includes("pos") ? "#dc2626" : "#334155"}
+                          fill={terminalNetSelected ? "#2563eb" : String(t.role).includes("pos") ? "#dc2626" : "#334155"}
                           stroke={active ? "#2563eb" : "white"}
                           strokeWidth="3"
+                          opacity={shouldFade ? 0.35 : 1}
                         />
-                        <text x={p.x + 10} y={p.y - 8} fontSize="11">
+                        <text x={p.x + 10} y={p.y - 8} fontSize="11" opacity={shouldFade ? 0.35 : 1}>
                           {t.label}
                         </text>
                       </g>

@@ -29,6 +29,7 @@ import {
   summarizeGraph
 } from "../lib/graph";
 import { solveFirstPass } from "../lib/solver";
+import { findSuspiciousNetUsage } from "../lib/netChecks";
 
 function normalizeModel(candidate: any) {
   if (!candidate || typeof candidate !== "object") return DEFAULT_MODEL;
@@ -53,9 +54,11 @@ export function useProjectEditor() {
   const [wireStartTerminalId, setWireStartTerminalId] = useState<string | null>(null);
   const [selectedComponentId, setSelectedComponentId] = useState<string | null>(model.components[0]?.id ?? null);
   const [selectedWireId, setSelectedWireId] = useState<string | null>(model.wires[0]?.id ?? null);
+  const [selectedNetId, setSelectedNetId] = useState<string | null>(null);
+  const [selectedTraceLoadId, setSelectedTraceLoadId] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<"normal" | "net" | "trace">("normal");
   const [newComponentType, setNewComponentType] = useState<string>("load");
   const [draggingComponentId, setDraggingComponentId] = useState<string | null>(null);
-  const [highlightNetId, setHighlightNetId] = useState<string | null>(null);
   const [showWireLabels, setShowWireLabels] = useState(true);
   const [snapToGrid, setSnapToGrid] = useState(true);
   const [search, setSearch] = useState("");
@@ -76,7 +79,25 @@ export function useProjectEditor() {
   const solverPrepGraph = useMemo(() => buildSolverPrepGraph(model), [model]);
   const solverPrepSummary = useMemo(() => summarizeGraph(solverPrepGraph), [solverPrepGraph]);
   const firstPassSolution = useMemo(() => solveFirstPass(model, terminalMap), [model, terminalMap]);
-  const warnings = useMemo(() => validateModel(model, terminalMap), [model, terminalMap]);
+
+  const selectedTraceSummary = useMemo(() => {
+    if (!selectedTraceLoadId) return null;
+    return (firstPassSolution.load_path_summaries || []).find(
+      (s: any) => s.component_id === selectedTraceLoadId
+    ) || null;
+  }, [firstPassSolution, selectedTraceLoadId]);
+
+  const traceWireIdSet = useMemo(() => {
+    if (!selectedTraceSummary) return new Set<string>();
+    return new Set((selectedTraceSummary.all_path_wire_ids || []).filter(Boolean));
+  }, [selectedTraceSummary]);
+
+  const warnings = useMemo(() => {
+    return [
+      ...validateModel(model, terminalMap),
+      ...findSuspiciousNetUsage(model)
+    ];
+  }, [model, terminalMap]);
 
   const filteredComponents = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -114,7 +135,12 @@ export function useProjectEditor() {
 
   function handleTerminalClick(terminalId: string) {
     const term = terminalMap[terminalId];
-    if (term) setHighlightNetId(term.net_id);
+    if (term) {
+      setSelectedNetId(term.net_id);
+      setSelectedWireId(null);
+      setSelectedTraceLoadId(null);
+      if (viewMode !== "trace") setViewMode("net");
+    }
 
     if (!wireStartTerminalId) {
       setWireStartTerminalId(terminalId);
@@ -128,6 +154,27 @@ export function useProjectEditor() {
 
     commit((prev) => addWire(prev, terminalMap, wireStartTerminalId, terminalId));
     setWireStartTerminalId(null);
+  }
+
+  function onSelectWire(wireId: string) {
+    setSelectedWireId(wireId);
+    setSelectedNetId(null);
+    setSelectedTraceLoadId(null);
+    setViewMode("normal");
+  }
+
+  function onSelectNet(netId: string | null) {
+    setSelectedNetId(netId);
+    setSelectedWireId(null);
+    setSelectedTraceLoadId(null);
+    setViewMode(netId ? "net" : "normal");
+  }
+
+  function onSelectTraceLoad(loadId: string | null) {
+    setSelectedTraceLoadId(loadId);
+    setSelectedWireId(null);
+    setSelectedNetId(null);
+    setViewMode(loadId ? "trace" : "normal");
   }
 
   function onUpdateComponentField(componentId: string, field: string, value: any) {
@@ -190,8 +237,10 @@ export function useProjectEditor() {
     setModel(DEFAULT_MODEL);
     setSelectedComponentId(DEFAULT_MODEL.components[0]?.id ?? null);
     setSelectedWireId(DEFAULT_MODEL.wires[0]?.id ?? null);
+    setSelectedNetId(null);
+    setSelectedTraceLoadId(null);
+    setViewMode("normal");
     setWireStartTerminalId(null);
-    setHighlightNetId(null);
     setImportError(null);
   }
 
@@ -207,8 +256,10 @@ export function useProjectEditor() {
       setModel(normalized);
       setSelectedComponentId(normalized.components[0]?.id ?? null);
       setSelectedWireId(normalized.wires[0]?.id ?? null);
+      setSelectedNetId(null);
+      setSelectedTraceLoadId(null);
+      setViewMode("normal");
       setWireStartTerminalId(null);
-      setHighlightNetId(null);
       setImportError(null);
     } catch (err: any) {
       setImportError(err?.message || "Invalid JSON");
@@ -224,8 +275,10 @@ export function useProjectEditor() {
       setModel(normalized);
       setSelectedComponentId(normalized.components[0]?.id ?? null);
       setSelectedWireId(normalized.wires[0]?.id ?? null);
+      setSelectedNetId(null);
+      setSelectedTraceLoadId(null);
+      setViewMode("normal");
       setWireStartTerminalId(null);
-      setHighlightNetId(null);
       setImportError(null);
       setImportText(text);
     } catch (err: any) {
@@ -277,9 +330,13 @@ export function useProjectEditor() {
     wireStartTerminalId,
     selectedComponentId,
     selectedWireId,
+    selectedNetId,
+    selectedTraceLoadId,
+    selectedTraceSummary,
+    traceWireIdSet,
+    viewMode,
     newComponentType,
     draggingComponentId,
-    highlightNetId,
     showWireLabels,
     snapToGrid,
     search,
@@ -293,13 +350,16 @@ export function useProjectEditor() {
     setNewComponentType,
     setSelectedComponentId,
     setSelectedWireId,
+    setSelectedNetId,
     setDraggingComponentId,
-    setHighlightNetId,
     setShowWireLabels,
     setSnapToGrid,
     setSearch,
     setImportText,
     handleTerminalClick,
+    onSelectWire,
+    onSelectNet,
+    onSelectTraceLoad,
     onUpdateComponentField,
     onUpdateTerminalField,
     onUpdateWireField,

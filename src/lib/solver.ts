@@ -123,16 +123,20 @@ export function solveFirstPass(model: any, terminalMap: Record<string, any>) {
     const posPath = bfsPath(graph, sourcePosCandidates, loadTerms.pos);
     const negPath = bfsPath(graph, loadTerms.neg, sourceNegCandidates);
 
+    const positivePathWireIds = posPath.path
+      .filter((s) => s.edge.kind === "wire")
+      .map((s) => s.edge.wire_id);
+
+    const negativePathWireIds = negPath.path
+      .filter((s) => s.edge.kind === "wire")
+      .map((s) => s.edge.wire_id);
+
     if (posPath.found && negPath.found && loadCurrent > 0) {
-      for (const step of posPath.path) {
-        if (step.edge.kind === "wire" && step.edge.wire_id) {
-          wireUsage[step.edge.wire_id] += loadCurrent;
-        }
+      for (const wireId of positivePathWireIds) {
+        if (wireId) wireUsage[wireId] += loadCurrent;
       }
-      for (const step of negPath.path) {
-        if (step.edge.kind === "wire" && step.edge.wire_id) {
-          wireUsage[step.edge.wire_id] += loadCurrent;
-        }
+      for (const wireId of negativePathWireIds) {
+        if (wireId) wireUsage[wireId] += loadCurrent;
       }
     }
 
@@ -141,8 +145,9 @@ export function solveFirstPass(model: any, terminalMap: Record<string, any>) {
       load_current_a: loadCurrent,
       positive_path_found: posPath.found,
       negative_path_found: negPath.found,
-      positive_path_wire_ids: posPath.path.filter((s) => s.edge.kind === "wire").map((s) => s.edge.wire_id),
-      negative_path_wire_ids: negPath.path.filter((s) => s.edge.kind === "wire").map((s) => s.edge.wire_id)
+      positive_path_wire_ids: positivePathWireIds,
+      negative_path_wire_ids: negativePathWireIds,
+      all_path_wire_ids: [...new Set([...positivePathWireIds, ...negativePathWireIds].filter(Boolean))]
     });
   }
 

@@ -25,7 +25,8 @@ export default function App() {
           Show wire labels
         </label>
 
-        <button onClick={() => editor.setHighlightNetId(null)}>Clear net highlight</button>
+        <button onClick={() => editor.onSelectNet(null)}>Clear net highlight</button>
+        <button onClick={() => editor.setSelectedWireId(null)}>Clear wire selection</button>
         <button onClick={editor.undo} disabled={!editor.history.length}>Undo</button>
         <button onClick={editor.exportModel}>Export JSON</button>
 
