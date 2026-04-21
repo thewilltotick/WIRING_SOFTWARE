@@ -4,22 +4,39 @@ export function PersistencePanel({ editor }: any) {
     importError,
     setImportText,
     importModelFromText,
+    importModelFromFile,
     exportModel,
+    exportComponentsList,
+    exportWireCutSheet,
     resetModel,
     clearSavedModel
   } = editor;
 
   return (
     <div style={{ border: "1px solid #ddd", borderRadius: 8, padding: 12, background: "#fff", marginTop: 16 }}>
-      <h2>Persistence</h2>
+      <h2>Persistence & Reports</h2>
 
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
         <button onClick={exportModel}>Export JSON</button>
+        <button onClick={exportComponentsList}>Export Components CSV</button>
+        <button onClick={exportWireCutSheet}>Export Wire Cut Sheet CSV</button>
         <button onClick={resetModel}>Reset to Default</button>
         <button onClick={clearSavedModel}>Clear Saved Local Copy</button>
       </div>
 
-      <div style={{ marginBottom: 8, fontWeight: "bold" }}>Import JSON</div>
+      <div style={{ marginBottom: 12 }}>
+        <div style={{ fontWeight: "bold", marginBottom: 6 }}>Import from file</div>
+        <input
+          type="file"
+          accept=".json,application/json"
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            if (file) importModelFromFile(file);
+          }}
+        />
+      </div>
+
+      <div style={{ marginBottom: 8, fontWeight: "bold" }}>Import from pasted JSON</div>
       <textarea
         value={importText}
         onChange={(e) => setImportText(e.target.value)}

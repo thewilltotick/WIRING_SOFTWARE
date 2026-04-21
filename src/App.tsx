@@ -3,6 +3,8 @@ import { CanvasView } from "./components/CanvasView";
 import { InspectorView } from "./components/InspectorView";
 import { ComponentListView } from "./components/ComponentListView";
 import { PersistencePanel } from "./components/PersistencePanel";
+import { NetListView } from "./components/NetListView";
+import { SolverPrepPanel } from "./components/SolverPrepPanel";
 
 export default function App() {
   const editor = useProjectEditor();
@@ -12,7 +14,7 @@ export default function App() {
       <h1>Trailer Wiring Studio</h1>
       <p>Components, terminals, nets, wires, and explicit return paths.</p>
 
-      <div style={{ display: "flex", gap: 12, marginBottom: 12, flexWrap: "wrap" }}>
+      <div style={{ display: "flex", gap: 12, marginBottom: 12, flexWrap: "wrap", alignItems: "center" }}>
         <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
           <input type="checkbox" checked={editor.snapToGrid} onChange={(e) => editor.setSnapToGrid(e.target.checked)} />
           Snap to grid
@@ -26,9 +28,15 @@ export default function App() {
         <button onClick={() => editor.setHighlightNetId(null)}>Clear net highlight</button>
         <button onClick={editor.undo} disabled={!editor.history.length}>Undo</button>
         <button onClick={editor.exportModel}>Export JSON</button>
+
+        <span style={{ marginLeft: 8 }}>Zoom: {(editor.zoom * 100).toFixed(0)}%</span>
+        <button onClick={editor.zoomOut}>-</button>
+        <button onClick={editor.resetZoom}>100%</button>
+        <button onClick={editor.zoomIn}>+</button>
+        <button onClick={editor.fitToContent}>Fit</button>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "280px 2fr 1fr", gap: 16 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "280px minmax(700px, 2fr) 1fr", gap: 16 }}>
         <div>
           <ComponentListView editor={editor} />
 
@@ -56,6 +64,8 @@ export default function App() {
             )}
           </div>
 
+          <NetListView editor={editor} />
+          <SolverPrepPanel editor={editor} />
           <PersistencePanel editor={editor} />
         </div>
 

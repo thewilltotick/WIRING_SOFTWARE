@@ -20,6 +20,15 @@ import {
   clearModelFromStorage,
   downloadModelJson
 } from "../lib/storage";
+import {
+  exportComponentsCsv,
+  exportWireCutSheetCsv
+} from "../lib/reports";
+import {
+  buildSolverPrepGraph,
+  summarizeGraph
+} from "../lib/graph";
+import { solveFirstPass } from "../lib/solver";
 
 function normalizeModel(candidate: any) {
   if (!candidate || typeof candidate !== "object") return DEFAULT_MODEL;
@@ -52,6 +61,7 @@ export function useProjectEditor() {
   const [search, setSearch] = useState("");
   const [importText, setImportText] = useState("");
   const [importError, setImportError] = useState<string | null>(null);
+  const [zoom, setZoom] = useState(1);
 
   useEffect(() => {
     try {
@@ -63,6 +73,9 @@ export function useProjectEditor() {
 
   const componentMap = useMemo(() => buildComponentMap(model.components), [model.components]);
   const terminalMap = useMemo(() => buildTerminalMap(model.components), [model.components]);
+  const solverPrepGraph = useMemo(() => buildSolverPrepGraph(model), [model]);
+  const solverPrepSummary = useMemo(() => summarizeGraph(solverPrepGraph), [solverPrepGraph]);
+  const firstPassSolution = useMemo(() => solveFirstPass(model, terminalMap), [model, terminalMap]);
   const warnings = useMemo(() => validateModel(model, terminalMap), [model, terminalMap]);
 
   const filteredComponents = useMemo(() => {
@@ -164,6 +177,14 @@ export function useProjectEditor() {
     downloadModelJson(model);
   }
 
+  function exportComponentsList() {
+    exportComponentsCsv(model);
+  }
+
+  function exportWireCutSheet() {
+    exportWireCutSheetCsv(model, terminalMap, componentMap);
+  }
+
   function resetModel() {
     setHistory((h) => pushHistory(h, model));
     setModel(DEFAULT_MODEL);
@@ -194,6 +215,59 @@ export function useProjectEditor() {
     }
   }
 
+  async function importModelFromFile(file: File) {
+    try {
+      const text = await file.text();
+      const parsed = JSON.parse(text);
+      const normalized = normalizeModel(parsed);
+      setHistory((h) => pushHistory(h, model));
+      setModel(normalized);
+      setSelectedComponentId(normalized.components[0]?.id ?? null);
+      setSelectedWireId(normalized.wires[0]?.id ?? null);
+      setWireStartTerminalId(null);
+      setHighlightNetId(null);
+      setImportError(null);
+      setImportText(text);
+    } catch (err: any) {
+      setImportError(err?.message || "Invalid file");
+    }
+  }
+
+  function zoomIn() {
+    setZoom((z) => Math.min(2.5, Number((z + 0.1).toFixed(2))));
+  }
+
+  function zoomOut() {
+    setZoom((z) => Math.max(0.4, Number((z - 0.1).toFixed(2))));
+  }
+
+  function resetZoom() {
+    setZoom(1);
+  }
+
+  function fitToContent() {
+    if (!model.components.length) {
+      setZoom(1);
+      return;
+    }
+
+    const minX = Math.min(...model.components.map((c: any) => c.x - c.width / 2));
+    const maxX = Math.max(...model.components.map((c: any) => c.x + c.width / 2));
+    const minY = Math.min(...model.components.map((c: any) => c.y - c.height / 2));
+    const maxY = Math.max(...model.components.map((c: any) => c.y + c.height / 2));
+
+    const contentWidth = maxX - minX + 200;
+    const contentHeight = maxY - minY + 200;
+
+    const viewportWidth = 1200;
+    const viewportHeight = 720;
+
+    const zoomX = viewportWidth / contentWidth;
+    const zoomY = viewportHeight / contentHeight;
+    const nextZoom = Math.max(0.4, Math.min(2.5, Number(Math.min(zoomX, zoomY).toFixed(2))));
+    setZoom(nextZoom);
+  }
+
   return {
     model,
     componentMap,
@@ -212,6 +286,10 @@ export function useProjectEditor() {
     history,
     importText,
     importError,
+    zoom,
+    solverPrepGraph,
+    solverPrepSummary,
+    firstPassSolution,
     setNewComponentType,
     setSelectedComponentId,
     setSelectedWireId,
@@ -233,8 +311,15 @@ export function useProjectEditor() {
     moveComponentTo,
     undo,
     exportModel,
+    exportComponentsList,
+    exportWireCutSheet,
     resetModel,
     clearSavedModel,
-    importModelFromText
+    importModelFromText,
+    importModelFromFile,
+    zoomIn,
+    zoomOut,
+    resetZoom,
+    fitToContent
   };
 }

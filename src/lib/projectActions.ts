@@ -34,7 +34,7 @@ export function addWire(model: any, terminalMap: Record<string, any>, fromId: st
     polarity,
     awg: "12",
     length_ft: 2,
-    current_a: 1,
+    material: "copper",
     attribution: {
       wire_color: defaultWireColor(polarity)
     }
