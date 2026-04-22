@@ -1,3 +1,10 @@
+import {
+  buildRenderedPoints,
+  nearestSegmentIndex,
+  segmentMidpoint,
+  type Point
+} from "../lib/wireRouting";
+
 function getTerminalPosition(component: any, terminal: any) {
   const x = component.x;
   const y = component.y;
@@ -39,14 +46,9 @@ function wireColor(color: string) {
   return "#7c3aed";
 }
 
-function orthogonalPath(a: any, b: any) {
-  const dx = Math.abs(a.x - b.x);
-  if (dx > 80) {
-    const midX = (a.x + b.x) / 2;
-    return `M ${a.x} ${a.y} L ${midX} ${a.y} L ${midX} ${b.y} L ${b.x} ${b.y}`;
-  }
-  const midY = (a.y + b.y) / 2;
-  return `M ${a.x} ${a.y} L ${a.x} ${midY} L ${b.x} ${midY} L ${b.x} ${b.y}`;
+function polylinePath(points: Point[]) {
+  if (!points.length) return "";
+  return points.map((p, i) => `${i === 0 ? "M" : "L"} ${p.x} ${p.y}`).join(" ");
 }
 
 export function CanvasView({ editor }: any) {
@@ -63,10 +65,24 @@ export function CanvasView({ editor }: any) {
     viewMode,
     wireStartTerminalId,
     draggingComponentId,
+    draggingWireWaypoint,
+    draggingWireSegment,
+    wireContextMenu,
     setDraggingComponentId,
+    setDraggingWireWaypoint,
+    setDraggingWireSegment,
     moveComponentTo,
     onSelectWire,
     onSelectNet,
+    onOpenWireContextMenu,
+    onCloseWireContextMenu,
+    onInsertWireWaypoint,
+    onStartDragWireWaypoint,
+    onMoveWireWaypoint,
+    onDeleteWireWaypoint,
+    onStartDragWireSegment,
+    onMoveWireSegment,
+    onDeleteWire,
     showWireLabels,
     snapToGrid,
     zoom
@@ -77,8 +93,12 @@ export function CanvasView({ editor }: any) {
   const canvasHeight = 1400;
 
   return (
-    <div style={{ border: "1px solid #ddd", borderRadius: 8, padding: 12, background: "#fff" }}>
+    <div style={{ border: "1px solid #ddd", borderRadius: 8, padding: 12, background: "#fff", position: "relative" }}>
       <h2>Canvas</h2>
+
+      <div style={{ fontSize: 12, marginBottom: 8, color: "#475569" }}>
+        Double-click a wire to add a bend on the nearest segment. Drag segment handles to move whole sections. Right-click a wire for actions.
+      </div>
 
       <div
         style={{
@@ -89,6 +109,7 @@ export function CanvasView({ editor }: any) {
           background: "#fafafa",
           resize: "vertical"
         }}
+        onClick={() => onCloseWireContextMenu()}
       >
         <div
           style={{
@@ -103,14 +124,34 @@ export function CanvasView({ editor }: any) {
             height={canvasHeight}
             viewBox={`0 0 ${canvasWidth} ${canvasHeight}`}
             onMouseMove={(e) => {
-              if (!draggingComponentId) return;
               const rect = (e.currentTarget as SVGSVGElement).getBoundingClientRect();
               const x = snap((e.clientX - rect.left) / zoom);
               const y = snap((e.clientY - rect.top) / zoom);
-              moveComponentTo(draggingComponentId, x, y);
+
+              if (draggingComponentId) {
+                moveComponentTo(draggingComponentId, x, y);
+                return;
+              }
+
+              if (draggingWireWaypoint) {
+                onMoveWireWaypoint(draggingWireWaypoint.wireId, draggingWireWaypoint.waypointIndex, { x, y });
+                return;
+              }
+
+              if (draggingWireSegment) {
+                onMoveWireSegment(x, y);
+              }
             }}
-            onMouseUp={() => setDraggingComponentId(null)}
-            onMouseLeave={() => setDraggingComponentId(null)}
+            onMouseUp={() => {
+              setDraggingComponentId(null);
+              setDraggingWireWaypoint(null);
+              setDraggingWireSegment(null);
+            }}
+            onMouseLeave={() => {
+              setDraggingComponentId(null);
+              setDraggingWireWaypoint(null);
+              setDraggingWireSegment(null);
+            }}
           >
             {Array.from({ length: Math.floor(canvasWidth / 20) }).map((_, i) => (
               <line key={`v-${i}`} x1={i * 20} y1={0} x2={i * 20} y2={canvasHeight} stroke="#f1f5f9" strokeWidth="1" />
@@ -129,6 +170,8 @@ export function CanvasView({ editor }: any) {
               const a = getTerminalPosition(fromComp, fromTerminal);
               const b = getTerminalPosition(toComp, toTerminal);
 
+              const points = buildRenderedPoints(a, w.waypoints || [], b);
+
               const wireSelected = selectedWireId === w.id;
               const wireNetSelected =
                 viewMode === "net" &&
@@ -144,10 +187,12 @@ export function CanvasView({ editor }: any) {
                 (viewMode === "net" && !wireSelected && !wireNetSelected) ||
                 (viewMode === "trace" && !wireSelected && !wireTraceSelected);
 
+              const labelPoint = points[Math.floor(points.length / 2)];
+
               return (
-                <g key={w.id} onClick={() => onSelectWire(w.id)} style={{ cursor: "pointer" }}>
+                <g key={w.id}>
                   <path
-                    d={orthogonalPath(a, b)}
+                    d={polylinePath(points)}
                     fill="none"
                     stroke={
                       wireSelected
@@ -158,17 +203,83 @@ export function CanvasView({ editor }: any) {
                     }
                     strokeWidth={wireSelected ? 5 : isHighlighted ? 4 : 3}
                     opacity={shouldFade ? 0.22 : 1}
+                    style={{ cursor: "pointer" }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onSelectWire(w.id);
+                    }}
+                    onDoubleClick={(e) => {
+                      e.stopPropagation();
+                      const rect = (e.currentTarget.ownerSVGElement as SVGSVGElement).getBoundingClientRect();
+                      const x = snap((e.clientX - rect.left) / zoom);
+                      const y = snap((e.clientY - rect.top) / zoom);
+                      onSelectWire(w.id);
+                      onInsertWireWaypoint(w.id, { x, y });
+                    }}
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      const rect = (e.currentTarget.ownerSVGElement as SVGSVGElement).getBoundingClientRect();
+                      const canvasX = snap((e.clientX - rect.left) / zoom);
+                      const canvasY = snap((e.clientY - rect.top) / zoom);
+                      onOpenWireContextMenu(w.id, e.clientX, e.clientY, canvasX, canvasY);
+                    }}
                   />
+
                   {showWireLabels && (
                     <text
-                      x={(a.x + b.x) / 2}
-                      y={Math.min(a.y, b.y) - 8}
+                      x={labelPoint.x}
+                      y={labelPoint.y - 8}
                       fontSize="12"
                       opacity={shouldFade ? 0.3 : 1}
                     >
                       {w.id}
                     </text>
                   )}
+
+                  {wireSelected && points.slice(0, -1).map((pt: Point, idx: number) => {
+                    const next = points[idx + 1];
+                    const mid = segmentMidpoint(pt, next);
+                    return (
+                      <rect
+                        key={`${w.id}-seg-${idx}`}
+                        x={mid.x - 5}
+                        y={mid.y - 5}
+                        width={10}
+                        height={10}
+                        fill="#dbeafe"
+                        stroke="#2563eb"
+                        strokeWidth="2"
+                        rx="2"
+                        style={{ cursor: "move" }}
+                        onMouseDown={(e) => {
+                          e.stopPropagation();
+                          onStartDragWireSegment(w.id, idx, mid.x, mid.y);
+                        }}
+                      />
+                    );
+                  })}
+
+                  {wireSelected && (w.waypoints || []).map((pt: any, idx: number) => (
+                    <circle
+                      key={`${w.id}-wp-${idx}`}
+                      cx={pt.x}
+                      cy={pt.y}
+                      r="7"
+                      fill="#ffffff"
+                      stroke="#2563eb"
+                      strokeWidth="3"
+                      style={{ cursor: "move" }}
+                      onMouseDown={(e) => {
+                        e.stopPropagation();
+                        onStartDragWireWaypoint(w.id, idx);
+                      }}
+                      onDoubleClick={(e) => {
+                        e.stopPropagation();
+                        onDeleteWireWaypoint(w.id, idx);
+                      }}
+                    />
+                  ))}
                 </g>
               );
             })}
@@ -212,8 +323,14 @@ export function CanvasView({ editor }: any) {
                     }
                     strokeWidth="2"
                     opacity={shouldFade ? 0.35 : 1}
-                    onClick={() => setSelectedComponentId(c.id)}
-                    onMouseDown={() => setDraggingComponentId(c.id)}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setSelectedComponentId(c.id);
+                    }}
+                    onMouseDown={(e) => {
+                      e.stopPropagation();
+                      setDraggingComponentId(c.id);
+                    }}
                     style={{ cursor: "move" }}
                   />
                   <text x={c.x} y={c.y - 4} textAnchor="middle" fontSize="14" fontWeight="bold" opacity={shouldFade ? 0.35 : 1}>
@@ -231,7 +348,8 @@ export function CanvasView({ editor }: any) {
                     return (
                       <g
                         key={t.id}
-                        onClick={() => {
+                        onClick={(e) => {
+                          e.stopPropagation();
                           onSelectNet(t.net_id);
                           handleTerminalClick(t.id);
                         }}
@@ -258,6 +376,56 @@ export function CanvasView({ editor }: any) {
           </svg>
         </div>
       </div>
+
+      {wireContextMenu && (
+        <div
+          style={{
+            position: "fixed",
+            left: wireContextMenu.x,
+            top: wireContextMenu.y,
+            zIndex: 1000,
+            background: "white",
+            border: "1px solid #cbd5e1",
+            borderRadius: 8,
+            boxShadow: "0 10px 25px rgba(0,0,0,0.12)",
+            padding: 6,
+            minWidth: 180
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <button
+            style={{ display: "block", width: "100%", textAlign: "left", padding: 8 }}
+            onClick={() => {
+              onSelectWire(wireContextMenu.wireId);
+              onCloseWireContextMenu();
+            }}
+          >
+            Select wire
+          </button>
+          <button
+            style={{ display: "block", width: "100%", textAlign: "left", padding: 8 }}
+            onClick={() => {
+              onSelectWire(wireContextMenu.wireId);
+              onInsertWireWaypoint(wireContextMenu.wireId, {
+                x: wireContextMenu.canvasX,
+                y: wireContextMenu.canvasY
+              });
+              onCloseWireContextMenu();
+            }}
+          >
+            Add bend joint
+          </button>
+          <button
+            style={{ display: "block", width: "100%", textAlign: "left", padding: 8, color: "#b91c1c" }}
+            onClick={() => {
+              onDeleteWire(wireContextMenu.wireId);
+              onCloseWireContextMenu();
+            }}
+          >
+            Delete wire
+          </button>
+        </div>
+      )}
     </div>
   );
 }

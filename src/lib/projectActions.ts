@@ -35,6 +35,7 @@ export function addWire(model: any, terminalMap: Record<string, any>, fromId: st
     awg: "12",
     length_ft: 2,
     material: "copper",
+    waypoints: [],
     attribution: {
       wire_color: defaultWireColor(polarity)
     }
@@ -85,6 +86,28 @@ export function updateWireField(model: any, wireId: string, field: string, value
       }
 
       return { ...w, [field]: value };
+    })
+  };
+}
+
+export function setWireWaypoints(model: any, wireId: string, waypoints: any[]) {
+  return {
+    ...model,
+    wires: model.wires.map((w: any) =>
+      w.id === wireId ? { ...w, waypoints } : w
+    )
+  };
+}
+
+export function deleteWireWaypoint(model: any, wireId: string, waypointIndex: number) {
+  return {
+    ...model,
+    wires: model.wires.map((w: any) => {
+      if (w.id !== wireId) return w;
+      return {
+        ...w,
+        waypoints: (w.waypoints || []).filter((_: any, i: number) => i !== waypointIndex)
+      };
     })
   };
 }
