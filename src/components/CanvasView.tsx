@@ -52,24 +52,35 @@ function polylinePath(points: Point[]) {
 
 const INLINE_TYPES = ["fuse", "breaker", "switch", "shunt", "resistor", "relay"];
 
+function getWireDisplayLabel(wire: any, terminalMap: Record<string, any>, mode: "custom" | "id" | "from_to") {
+  if (mode === "id") return wire.id || "";
+  if (mode === "custom") return wire.label || wire.id || "";
+
+  const from = wire.from_terminal ? (terminalMap[wire.from_terminal]?.label || terminalMap[wire.from_terminal]?.id || "from") : "parked";
+  const to = wire.to_terminal ? (terminalMap[wire.to_terminal]?.label || terminalMap[wire.to_terminal]?.id || "to") : "parked";
+  return `${from} → ${to}`;
+}
+
 export function CanvasView({ editor }: any) {
   const {
     model,
     componentMap,
     terminalMap,
     handleTerminalClick,
-    selectedComponentId,
-    setSelectedComponentId,
-    selectedWireId,
+    selectedComponentHexId,
+    setSelectedComponentHexId,
+    selectedWireHexId,
     selectedNetId,
     traceWireIdSet,
     viewMode,
+    enableNetSelection,
+    wireLabelMode,
     wireStartTerminalId,
-    draggingComponentId,
+    draggingComponentHexId,
     draggingWireWaypoint,
     draggingWireSegment,
     wireContextMenu,
-    setDraggingComponentId,
+    setDraggingComponentHexId,
     setDraggingWireWaypoint,
     setDraggingWireSegment,
     moveComponentTo,
@@ -130,13 +141,13 @@ export function CanvasView({ editor }: any) {
               const x = snap((e.clientX - rect.left) / zoom);
               const y = snap((e.clientY - rect.top) / zoom);
 
-              if (draggingComponentId) {
-                moveComponentTo(draggingComponentId, x, y);
+              if (draggingComponentHexId) {
+                moveComponentTo(draggingComponentHexId, x, y);
                 return;
               }
 
               if (draggingWireWaypoint) {
-                onMoveWireWaypoint(draggingWireWaypoint.wireId, draggingWireWaypoint.waypointIndex, { x, y });
+                onMoveWireWaypoint(draggingWireWaypoint.wireHexId, draggingWireWaypoint.waypointIndex, { x, y });
                 return;
               }
 
@@ -145,12 +156,12 @@ export function CanvasView({ editor }: any) {
               }
             }}
             onMouseUp={() => {
-              setDraggingComponentId(null);
+              setDraggingComponentHexId(null);
               setDraggingWireWaypoint(null);
               setDraggingWireSegment(null);
             }}
             onMouseLeave={() => {
-              setDraggingComponentId(null);
+              setDraggingComponentHexId(null);
               setDraggingWireWaypoint(null);
               setDraggingWireSegment(null);
             }}
@@ -163,22 +174,35 @@ export function CanvasView({ editor }: any) {
             ))}
 
             {model.wires.map((w: any) => {
-              const fromTerminal = terminalMap[w.from_terminal];
-              const toTerminal = terminalMap[w.to_terminal];
-              if (!fromTerminal || !toTerminal) return null;
+              const resolveTerminalPoint = (terminalId: string | null, parkedTerminalId: string | null) => {
+                if (terminalId) {
+                  const terminal = terminalMap[terminalId];
+                  if (terminal) {
+                    const comp = componentMap[terminal.component_hex_id];
+                    if (comp) return getTerminalPosition(comp, terminal);
+                  }
+                }
+                if (parkedTerminalId) {
+                  const parkedComp = model.components.find((c: any) => c.terminals.some((t: any) => t.id === parkedTerminalId));
+                  if (parkedComp) return { x: parkedComp.x, y: parkedComp.y };
+                }
+                return { x: 100, y: 100 };
+              };
 
-              const fromComp = componentMap[fromTerminal.component_id];
-              const toComp = componentMap[toTerminal.component_id];
-              const a = getTerminalPosition(fromComp, fromTerminal);
-              const b = getTerminalPosition(toComp, toTerminal);
+              const a = resolveTerminalPoint(w.from_terminal, w.from_terminal_parked);
+              const b = resolveTerminalPoint(w.to_terminal, w.to_terminal_parked);
+              const points = buildRenderedPoints(a, w.waypoints || [], b, !!w.route_locked);
 
-              const points = buildRenderedPoints(a, w.waypoints || [], b);
+              const fromTerminal = w.from_terminal ? terminalMap[w.from_terminal] : null;
+              const toTerminal = w.to_terminal ? terminalMap[w.to_terminal] : null;
 
-              const wireSelected = selectedWireId === w.id;
+              const wireSelected = selectedWireHexId === w.hex_id;
               const wireNetSelected =
+                enableNetSelection &&
                 viewMode === "net" &&
                 selectedNetId &&
-                (fromTerminal.net_id === selectedNetId || toTerminal.net_id === selectedNetId);
+                ((fromTerminal && fromTerminal.net_id === selectedNetId) ||
+                  (toTerminal && toTerminal.net_id === selectedNetId));
 
               const wireTraceSelected =
                 viewMode === "trace" &&
@@ -186,13 +210,14 @@ export function CanvasView({ editor }: any) {
 
               const isHighlighted = wireSelected || wireNetSelected || wireTraceSelected;
               const shouldFade =
-                (viewMode === "net" && !wireSelected && !wireNetSelected) ||
+                (enableNetSelection && viewMode === "net" && !wireSelected && !wireNetSelected) ||
                 (viewMode === "trace" && !wireSelected && !wireTraceSelected);
 
               const labelPoint = points[Math.floor(points.length / 2)];
+              const displayLabel = getWireDisplayLabel(w, terminalMap, wireLabelMode);
 
               return (
-                <g key={w.id}>
+                <g key={w.hex_id}>
                   <path
                     d={polylinePath(points)}
                     fill="none"
@@ -208,7 +233,7 @@ export function CanvasView({ editor }: any) {
                     style={{ cursor: "pointer", pointerEvents: "stroke" }}
                     onClick={(e) => {
                       e.stopPropagation();
-                      onSelectWire(w.id);
+                      onSelectWire(w.hex_id);
                     }}
                     onDoubleClick={(e) => {
                       e.preventDefault();
@@ -217,11 +242,11 @@ export function CanvasView({ editor }: any) {
                       const rect = (e.currentTarget.ownerSVGElement as SVGSVGElement).getBoundingClientRect();
                       const x = snap((e.clientX - rect.left) / zoom);
                       const y = snap((e.clientY - rect.top) / zoom);
-                      const wireId = w.id;
+                      const wireHexId = w.hex_id;
 
                       requestAnimationFrame(() => {
-                        onSelectWire(wireId);
-                        onInsertWireWaypoint(wireId, { x, y });
+                        onSelectWire(wireHexId);
+                        onInsertWireWaypoint(wireHexId, { x, y });
                       });
                     }}
                     onContextMenu={(e) => {
@@ -230,18 +255,18 @@ export function CanvasView({ editor }: any) {
                       const rect = (e.currentTarget.ownerSVGElement as SVGSVGElement).getBoundingClientRect();
                       const canvasX = snap((e.clientX - rect.left) / zoom);
                       const canvasY = snap((e.clientY - rect.top) / zoom);
-                      onOpenWireContextMenu(w.id, e.clientX, e.clientY, canvasX, canvasY);
+                      onOpenWireContextMenu(w.hex_id, e.clientX, e.clientY, canvasX, canvasY);
                     }}
                   />
 
-                  {showWireLabels && (
+                  {showWireLabels && displayLabel && (
                     <text
                       x={labelPoint.x}
                       y={labelPoint.y - 8}
                       fontSize="12"
                       opacity={shouldFade ? 0.3 : 1}
                     >
-                      {w.id}
+                      {displayLabel}
                     </text>
                   )}
 
@@ -250,7 +275,7 @@ export function CanvasView({ editor }: any) {
                     const mid = segmentMidpoint(pt, next);
                     return (
                       <rect
-                        key={`${w.id}-seg-${idx}`}
+                        key={`${w.hex_id}-seg-${idx}`}
                         x={mid.x - 6}
                         y={mid.y - 6}
                         width={12}
@@ -262,7 +287,7 @@ export function CanvasView({ editor }: any) {
                         style={{ cursor: "move", pointerEvents: "all" }}
                         onMouseDown={(e) => {
                           e.stopPropagation();
-                          onStartDragWireSegment(w.id, idx, mid.x, mid.y);
+                          onStartDragWireSegment(w.hex_id, idx, mid.x, mid.y);
                         }}
                       />
                     );
@@ -270,7 +295,7 @@ export function CanvasView({ editor }: any) {
 
                   {wireSelected && (w.waypoints || []).map((pt: any, idx: number) => (
                     <circle
-                      key={`${w.id}-wp-${idx}`}
+                      key={`${w.hex_id}-wp-${idx}`}
                       cx={pt.x}
                       cy={pt.y}
                       r="9"
@@ -280,11 +305,11 @@ export function CanvasView({ editor }: any) {
                       style={{ cursor: "move", pointerEvents: "all" }}
                       onMouseDown={(e) => {
                         e.stopPropagation();
-                        onStartDragWireWaypoint(w.id, idx);
+                        onStartDragWireWaypoint(w.hex_id, idx);
                       }}
                       onDoubleClick={(e) => {
                         e.stopPropagation();
-                        onDeleteWireWaypoint(w.id, idx);
+                        onDeleteWireWaypoint(w.hex_id, idx);
                       }}
                     />
                   ))}
@@ -294,6 +319,7 @@ export function CanvasView({ editor }: any) {
 
             {model.components.map((c: any) => {
               const componentOnSelectedNet =
+                enableNetSelection &&
                 viewMode === "net" &&
                 selectedNetId &&
                 c.terminals.some((t: any) => t.net_id === selectedNetId);
@@ -308,11 +334,11 @@ export function CanvasView({ editor }: any) {
                 );
 
               const shouldFade =
-                (viewMode === "net" && !componentOnSelectedNet) ||
+                (enableNetSelection && viewMode === "net" && !componentOnSelectedNet) ||
                 (viewMode === "trace" && !componentOnTrace);
 
               return (
-                <g key={c.id}>
+                <g key={c.hex_id}>
                   <rect
                     x={c.x - c.width / 2}
                     y={c.y - c.height / 2}
@@ -321,7 +347,7 @@ export function CanvasView({ editor }: any) {
                     rx="12"
                     fill="white"
                     stroke={
-                      selectedComponentId === c.id
+                      selectedComponentHexId === c.hex_id
                         ? "#2563eb"
                         : componentOnTrace
                         ? "#16a34a"
@@ -333,11 +359,11 @@ export function CanvasView({ editor }: any) {
                     opacity={shouldFade ? 0.35 : 1}
                     onClick={(e) => {
                       e.stopPropagation();
-                      setSelectedComponentId(c.id);
+                      setSelectedComponentHexId(c.hex_id);
                     }}
                     onMouseDown={(e) => {
                       e.stopPropagation();
-                      setDraggingComponentId(c.id);
+                      setDraggingComponentHexId(c.hex_id);
                     }}
                     style={{ cursor: "move" }}
                   />
@@ -351,14 +377,17 @@ export function CanvasView({ editor }: any) {
                   {c.terminals.map((t: any) => {
                     const p = getTerminalPosition(c, t);
                     const active = wireStartTerminalId === t.id;
-                    const terminalNetSelected = viewMode === "net" && selectedNetId === t.net_id;
+                    const terminalNetSelected =
+                      enableNetSelection &&
+                      viewMode === "net" &&
+                      selectedNetId === t.net_id;
 
                     return (
                       <g
                         key={t.id}
                         onClick={(e) => {
                           e.stopPropagation();
-                          onSelectNet(t.net_id);
+                          if (enableNetSelection) onSelectNet(t.net_id);
                           handleTerminalClick(t.id);
                         }}
                         style={{ cursor: "pointer" }}
@@ -404,7 +433,7 @@ export function CanvasView({ editor }: any) {
           <button
             style={{ display: "block", width: "100%", textAlign: "left", padding: 8 }}
             onClick={() => {
-              onSelectWire(wireContextMenu.wireId);
+              onSelectWire(wireContextMenu.wireHexId);
               onCloseWireContextMenu();
             }}
           >
@@ -413,8 +442,8 @@ export function CanvasView({ editor }: any) {
           <button
             style={{ display: "block", width: "100%", textAlign: "left", padding: 8 }}
             onClick={() => {
-              onSelectWire(wireContextMenu.wireId);
-              onInsertWireWaypoint(wireContextMenu.wireId, {
+              onSelectWire(wireContextMenu.wireHexId);
+              onInsertWireWaypoint(wireContextMenu.wireHexId, {
                 x: wireContextMenu.canvasX,
                 y: wireContextMenu.canvasY
               });
@@ -431,7 +460,7 @@ export function CanvasView({ editor }: any) {
               key={type}
               style={{ display: "block", width: "100%", textAlign: "left", padding: 8 }}
               onClick={() =>
-                onInsertInlineComponent(wireContextMenu.wireId, type, {
+                onInsertInlineComponent(wireContextMenu.wireHexId, type, {
                   x: wireContextMenu.canvasX,
                   y: wireContextMenu.canvasY
                 })
@@ -446,7 +475,7 @@ export function CanvasView({ editor }: any) {
           <button
             style={{ display: "block", width: "100%", textAlign: "left", padding: 8, color: "#b91c1c" }}
             onClick={() => {
-              onDeleteWire(wireContextMenu.wireId);
+              onDeleteWire(wireContextMenu.wireHexId);
               onCloseWireContextMenu();
             }}
           >

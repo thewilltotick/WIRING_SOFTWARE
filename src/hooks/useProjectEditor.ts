@@ -38,23 +38,59 @@ import {
   moveWaypoint,
   moveSegment
 } from "../lib/wireRouting";
+import { generateHexId } from "../lib/id";
 
 function normalizeModel(candidate: any) {
   if (!candidate || typeof candidate !== "object") return DEFAULT_MODEL;
+
+  const componentSeen = new Set<string>();
+  const wireSeen = new Set<string>();
+
+  const normalizedComponents = (Array.isArray(candidate.components) ? candidate.components : []).map((c: any) => {
+    let hex_id = String(c.hex_id || "");
+    if (!hex_id || componentSeen.has(hex_id)) {
+      do {
+        hex_id = generateHexId("c");
+      } while (componentSeen.has(hex_id));
+    }
+    componentSeen.add(hex_id);
+
+    return {
+      ...c,
+      hex_id,
+      id: c.id ?? c.label ?? "COMP",
+      label: c.label ?? c.id ?? "Component",
+      terminals: Array.isArray(c.terminals) ? c.terminals : []
+    };
+  });
+
+  const normalizedWires = (Array.isArray(candidate.wires) ? candidate.wires : []).map((w: any, idx: number) => {
+    let hex_id = String(w.hex_id || "");
+    if (!hex_id || wireSeen.has(hex_id)) {
+      do {
+        hex_id = generateHexId("w");
+      } while (wireSeen.has(hex_id));
+    }
+    wireSeen.add(hex_id);
+
+    return {
+      ...w,
+      hex_id,
+      id: w.id ?? `W${idx + 1}`,
+      label: w.label ?? "",
+      from_terminal: w.from_terminal ?? null,
+      to_terminal: w.to_terminal ?? null,
+      from_terminal_parked: w.from_terminal_parked ?? null,
+      to_terminal_parked: w.to_terminal_parked ?? null,
+      route_locked: !!w.route_locked,
+      waypoints: Array.isArray(w.waypoints) ? w.waypoints : []
+    };
+  });
+
   return {
     nets: Array.isArray(candidate.nets) ? candidate.nets : [],
-    components: Array.isArray(candidate.components) ? candidate.components : [],
-    wires: Array.isArray(candidate.wires)
-      ? candidate.wires.map((w: any) => ({
-          ...w,
-          from_terminal: w.from_terminal ?? null,
-          to_terminal: w.to_terminal ?? null,
-          from_terminal_parked: w.from_terminal_parked ?? null,
-          to_terminal_parked: w.to_terminal_parked ?? null,
-          route_locked: !!w.route_locked,
-          waypoints: Array.isArray(w.waypoints) ? w.waypoints : []
-        }))
-      : [],
+    components: normalizedComponents,
+    wires: normalizedWires,
   };
 }
 
@@ -70,18 +106,19 @@ export function useProjectEditor() {
 
   const [history, setHistory] = useState<any[]>([]);
   const [wireStartTerminalId, setWireStartTerminalId] = useState<string | null>(null);
-  const [selectedComponentId, setSelectedComponentId] = useState<string | null>(model.components[0]?.id ?? null);
-  const [selectedWireId, setSelectedWireId] = useState<string | null>(model.wires[0]?.id ?? null);
+  const [selectedComponentHexId, setSelectedComponentHexId] = useState<string | null>(model.components[0]?.hex_id ?? null);
+  const [selectedWireHexId, setSelectedWireHexId] = useState<string | null>(model.wires[0]?.hex_id ?? null);
   const [selectedNetId, setSelectedNetId] = useState<string | null>(null);
   const [selectedTraceLoadId, setSelectedTraceLoadId] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<"normal" | "net" | "trace">("normal");
   const [enableNetSelection, setEnableNetSelection] = useState(false);
+  const [wireLabelMode, setWireLabelMode] = useState<"custom" | "id" | "from_to">("custom");
   const [newComponentType, setNewComponentType] = useState<string>("load");
-  const [draggingComponentId, setDraggingComponentId] = useState<string | null>(null);
-  const [draggingWireWaypoint, setDraggingWireWaypoint] = useState<{ wireId: string; waypointIndex: number } | null>(null);
-  const [draggingWireSegment, setDraggingWireSegment] = useState<{ wireId: string; segmentIndex: number; lastX: number; lastY: number } | null>(null);
+  const [draggingComponentHexId, setDraggingComponentHexId] = useState<string | null>(null);
+  const [draggingWireWaypoint, setDraggingWireWaypoint] = useState<{ wireHexId: string; waypointIndex: number } | null>(null);
+  const [draggingWireSegment, setDraggingWireSegment] = useState<{ wireHexId: string; segmentIndex: number; lastX: number; lastY: number } | null>(null);
   const [wireContextMenu, setWireContextMenu] = useState<{
-    wireId: string;
+    wireHexId: string;
     x: number;
     y: number;
     canvasX: number;
@@ -136,6 +173,7 @@ export function useProjectEditor() {
     const q = search.trim().toLowerCase();
     if (!q) return model.components;
     return model.components.filter((c: any) =>
+      String(c.hex_id).toLowerCase().includes(q) ||
       String(c.id).toLowerCase().includes(q) ||
       String(c.label).toLowerCase().includes(q) ||
       String(c.type).toLowerCase().includes(q) ||
@@ -159,7 +197,7 @@ export function useProjectEditor() {
       const { history: nextHistory, previous } = popHistory(prevHistory);
       if (previous) {
         setModel(previous);
-        setSelectedWireId(null);
+        setSelectedWireHexId(null);
         setWireStartTerminalId(null);
         setDraggingWireWaypoint(null);
         setDraggingWireSegment(null);
@@ -170,7 +208,7 @@ export function useProjectEditor() {
   }
 
   function clearSelection() {
-    setSelectedWireId(null);
+    setSelectedWireHexId(null);
     setSelectedNetId(null);
     setSelectedTraceLoadId(null);
     setViewMode("normal");
@@ -180,12 +218,14 @@ export function useProjectEditor() {
   function handleTerminalClick(terminalId: string) {
     setWireContextMenu(null);
 
-    const term = terminalMap[terminalId];
-    if (term && enableNetSelection) {
-      setSelectedNetId(term.net_id);
-      setSelectedWireId(null);
-      setSelectedTraceLoadId(null);
-      if (viewMode !== "trace") setViewMode("net");
+    if (enableNetSelection) {
+      const term = terminalMap[terminalId];
+      if (term) {
+        setSelectedNetId(term.net_id);
+        setSelectedWireHexId(null);
+        setSelectedTraceLoadId(null);
+        if (viewMode !== "trace") setViewMode("net");
+      }
     }
 
     if (!wireStartTerminalId) {
@@ -202,8 +242,8 @@ export function useProjectEditor() {
     setWireStartTerminalId(null);
   }
 
-  function onSelectWire(wireId: string) {
-    setSelectedWireId(wireId);
+  function onSelectWire(wireHexId: string) {
+    setSelectedWireHexId(wireHexId);
     setSelectedNetId(null);
     setSelectedTraceLoadId(null);
     setViewMode("normal");
@@ -211,13 +251,9 @@ export function useProjectEditor() {
   }
 
   function onSelectNet(netId: string | null) {
-    if (!enableNetSelection) {
-      setSelectedNetId(null);
-      if (viewMode === "net") setViewMode("normal");
-      return;
-    }
+    if (!enableNetSelection) return;
     setSelectedNetId(netId);
-    setSelectedWireId(null);
+    setSelectedWireHexId(null);
     setSelectedTraceLoadId(null);
     setViewMode(netId ? "net" : "normal");
     setWireContextMenu(null);
@@ -225,43 +261,43 @@ export function useProjectEditor() {
 
   function onSelectTraceLoad(loadId: string | null) {
     setSelectedTraceLoadId(loadId);
-    setSelectedWireId(null);
+    setSelectedWireHexId(null);
     setSelectedNetId(null);
     setViewMode(loadId ? "trace" : "normal");
     setWireContextMenu(null);
   }
 
-  function onOpenWireContextMenu(wireId: string, x: number, y: number, canvasX: number, canvasY: number) {
-    setSelectedWireId(wireId);
+  function onOpenWireContextMenu(wireHexId: string, x: number, y: number, canvasX: number, canvasY: number) {
+    setSelectedWireHexId(wireHexId);
     setSelectedNetId(null);
     setSelectedTraceLoadId(null);
     setViewMode("normal");
-    setWireContextMenu({ wireId, x, y, canvasX, canvasY });
+    setWireContextMenu({ wireHexId, x, y, canvasX, canvasY });
   }
 
   function onCloseWireContextMenu() {
     setWireContextMenu(null);
   }
 
-  function onInsertInlineComponent(wireId: string, componentType: string, point: { x: number; y: number }) {
-    commit((prev) => insertInlineComponentOnWire(prev, wireId, componentType, point));
+  function onInsertInlineComponent(wireHexId: string, componentType: string, point: { x: number; y: number }) {
+    commit((prev) => insertInlineComponentOnWire(prev, wireHexId, componentType, point));
     setWireContextMenu(null);
   }
 
-  function onUpdateComponentField(componentId: string, field: string, value: any) {
-    commit((prev) => updateComponentField(prev, componentId, field, value));
+  function onUpdateComponentField(componentHexId: string, field: string, value: any) {
+    commit((prev) => updateComponentField(prev, componentHexId, field, value));
   }
 
   function onUpdateTerminalField(terminalId: string, field: string, value: any) {
     commit((prev) => updateTerminalField(prev, terminalId, field, value));
   }
 
-  function onUpdateWireField(wireId: string, field: string, value: any) {
-    commit((prev) => updateWireField(prev, wireId, field, value));
+  function onUpdateWireField(wireHexId: string, field: string, value: any) {
+    commit((prev) => updateWireField(prev, wireHexId, field, value));
   }
 
-  function getWireById(wireId: string) {
-    return model.wires.find((w: any) => w.id === wireId);
+  function getWireByHexId(wireHexId: string) {
+    return model.wires.find((w: any) => w.hex_id === wireHexId);
   }
 
   function parkedPointFromTerminalId(terminalId: string | null) {
@@ -271,15 +307,15 @@ export function useProjectEditor() {
     return { x: anyComponent.x, y: anyComponent.y };
   }
 
-  function getWireEndpoints(wireId: string) {
-    const wire = getWireById(wireId);
+  function getWireEndpoints(wireHexId: string) {
+    const wire = getWireByHexId(wireHexId);
     if (!wire) return null;
 
     const resolveTerminalPoint = (terminalId: string | null, parkedTerminalId: string | null) => {
       if (terminalId) {
         const terminal = terminalMap[terminalId];
         if (terminal) {
-          const comp = componentMap[terminal.component_id];
+          const comp = componentMap[terminal.component_hex_id];
           if (comp) {
             const x = comp.x;
             const y = comp.y;
@@ -323,13 +359,13 @@ export function useProjectEditor() {
     };
   }
 
-  function onInsertWireWaypoint(wireId: string, point: { x: number; y: number }) {
-    const endpoints = getWireEndpoints(wireId);
+  function onInsertWireWaypoint(wireHexId: string, point: { x: number; y: number }) {
+    const endpoints = getWireEndpoints(wireHexId);
     if (!endpoints) return;
     commit((prev) =>
       setWireWaypoints(
         prev,
-        wireId,
+        wireHexId,
         insertWaypointOnSegment(
           endpoints.start,
           endpoints.waypoints,
@@ -341,19 +377,19 @@ export function useProjectEditor() {
     );
   }
 
-  function onStartDragWireWaypoint(wireId: string, waypointIndex: number) {
-    setDraggingWireWaypoint({ wireId, waypointIndex });
-    setSelectedWireId(wireId);
+  function onStartDragWireWaypoint(wireHexId: string, waypointIndex: number) {
+    setDraggingWireWaypoint({ wireHexId, waypointIndex });
+    setSelectedWireHexId(wireHexId);
     setWireContextMenu(null);
   }
 
-  function onMoveWireWaypoint(wireId: string, waypointIndex: number, point: { x: number; y: number }) {
-    const endpoints = getWireEndpoints(wireId);
+  function onMoveWireWaypoint(wireHexId: string, waypointIndex: number, point: { x: number; y: number }) {
+    const endpoints = getWireEndpoints(wireHexId);
     if (!endpoints) return;
     setModel((prev) =>
       setWireWaypoints(
         prev,
-        wireId,
+        wireHexId,
         moveWaypoint(
           endpoints.start,
           endpoints.waypoints,
@@ -366,20 +402,20 @@ export function useProjectEditor() {
     );
   }
 
-  function onDeleteWireWaypoint(wireId: string, waypointIndex: number) {
-    commit((prev) => deleteWireWaypoint(prev, wireId, waypointIndex));
+  function onDeleteWireWaypoint(wireHexId: string, waypointIndex: number) {
+    commit((prev) => deleteWireWaypoint(prev, wireHexId, waypointIndex));
   }
 
-  function onStartDragWireSegment(wireId: string, segmentIndex: number, x: number, y: number) {
-    setDraggingWireSegment({ wireId, segmentIndex, lastX: x, lastY: y });
-    setSelectedWireId(wireId);
+  function onStartDragWireSegment(wireHexId: string, segmentIndex: number, x: number, y: number) {
+    setDraggingWireSegment({ wireHexId, segmentIndex, lastX: x, lastY: y });
+    setSelectedWireHexId(wireHexId);
     setWireContextMenu(null);
   }
 
   function onMoveWireSegment(x: number, y: number) {
     if (!draggingWireSegment) return;
-    const { wireId, segmentIndex, lastX, lastY } = draggingWireSegment;
-    const endpoints = getWireEndpoints(wireId);
+    const { wireHexId, segmentIndex, lastX, lastY } = draggingWireSegment;
+    const endpoints = getWireEndpoints(wireHexId);
     if (!endpoints) return;
 
     const dx = x - lastX;
@@ -388,7 +424,7 @@ export function useProjectEditor() {
     setModel((prev) =>
       setWireWaypoints(
         prev,
-        wireId,
+        wireHexId,
         moveSegment(
           endpoints.start,
           endpoints.waypoints,
@@ -400,37 +436,37 @@ export function useProjectEditor() {
       )
     );
 
-    setDraggingWireSegment({ wireId, segmentIndex, lastX: x, lastY: y });
+    setDraggingWireSegment({ wireHexId, segmentIndex, lastX: x, lastY: y });
   }
 
-  function onAddTerminal(componentId: string) {
-    commit((prev) => addTerminal(prev, componentId));
+  function onAddTerminal(componentHexId: string) {
+    commit((prev) => addTerminal(prev, componentHexId));
   }
 
   function onDeleteTerminal(terminalId: string) {
     commit((prev) => deleteTerminal(prev, terminalId));
   }
 
-  function onDeleteWire(wireId: string) {
-    commit((prev) => deleteWire(prev, wireId));
-    setSelectedWireId((current) => (current === wireId ? null : current));
+  function onDeleteWire(wireHexId: string) {
+    commit((prev) => deleteWire(prev, wireHexId));
+    setSelectedWireHexId((current) => (current === wireHexId ? null : current));
     setWireContextMenu(null);
   }
 
-  function onDeleteComponent(componentId: string) {
-    commit((prev) => deleteComponent(prev, componentId));
-    setSelectedComponentId((current) => (current === componentId ? null : current));
+  function onDeleteComponent(componentHexId: string) {
+    commit((prev) => deleteComponent(prev, componentHexId));
+    setSelectedComponentHexId((current) => (current === componentHexId ? null : current));
   }
 
   function onAddComponent() {
     commit((prev) => addComponent(prev, newComponentType));
   }
 
-  function moveComponentTo(componentId: string, x: number, y: number) {
+  function moveComponentTo(componentHexId: string, x: number, y: number) {
     setModel((prev) => ({
       ...prev,
       components: prev.components.map((c: any) =>
-        c.id === componentId ? { ...c, x, y } : c
+        c.hex_id === componentHexId ? { ...c, x, y } : c
       )
     }));
   }
@@ -450,8 +486,8 @@ export function useProjectEditor() {
   function resetModel() {
     setHistory((h) => pushHistory(h, model));
     setModel(DEFAULT_MODEL);
-    setSelectedComponentId(DEFAULT_MODEL.components[0]?.id ?? null);
-    setSelectedWireId(DEFAULT_MODEL.wires[0]?.id ?? null);
+    setSelectedComponentHexId(DEFAULT_MODEL.components[0]?.hex_id ?? null);
+    setSelectedWireHexId(DEFAULT_MODEL.wires[0]?.hex_id ?? null);
     setSelectedNetId(null);
     setSelectedTraceLoadId(null);
     setViewMode("normal");
@@ -472,8 +508,8 @@ export function useProjectEditor() {
       const normalized = normalizeModel(parsed);
       setHistory((h) => pushHistory(h, model));
       setModel(normalized);
-      setSelectedComponentId(normalized.components[0]?.id ?? null);
-      setSelectedWireId(normalized.wires[0]?.id ?? null);
+      setSelectedComponentHexId(normalized.components[0]?.hex_id ?? null);
+      setSelectedWireHexId(normalized.wires[0]?.hex_id ?? null);
       setSelectedNetId(null);
       setSelectedTraceLoadId(null);
       setViewMode("normal");
@@ -494,8 +530,8 @@ export function useProjectEditor() {
       const normalized = normalizeModel(parsed);
       setHistory((h) => pushHistory(h, model));
       setModel(normalized);
-      setSelectedComponentId(normalized.components[0]?.id ?? null);
-      setSelectedWireId(normalized.wires[0]?.id ?? null);
+      setSelectedComponentHexId(normalized.components[0]?.hex_id ?? null);
+      setSelectedWireHexId(normalized.wires[0]?.hex_id ?? null);
       setSelectedNetId(null);
       setSelectedTraceLoadId(null);
       setViewMode("normal");
@@ -552,16 +588,17 @@ export function useProjectEditor() {
     warnings,
     filteredComponents,
     wireStartTerminalId,
-    selectedComponentId,
-    selectedWireId,
+    selectedComponentHexId,
+    selectedWireHexId,
     selectedNetId,
     selectedTraceLoadId,
     selectedTraceSummary,
     traceWireIdSet,
     viewMode,
     enableNetSelection,
+    wireLabelMode,
     newComponentType,
-    draggingComponentId,
+    draggingComponentHexId,
     draggingWireWaypoint,
     draggingWireSegment,
     wireContextMenu,
@@ -576,10 +613,10 @@ export function useProjectEditor() {
     solverPrepSummary,
     firstPassSolution,
     setNewComponentType,
-    setSelectedComponentId,
-    setSelectedWireId,
+    setSelectedComponentHexId,
+    setSelectedWireHexId,
     setSelectedNetId,
-    setDraggingComponentId,
+    setDraggingComponentHexId,
     setDraggingWireWaypoint,
     setDraggingWireSegment,
     setShowWireLabels,
@@ -587,6 +624,7 @@ export function useProjectEditor() {
     setSearch,
     setImportText,
     setEnableNetSelection,
+    setWireLabelMode,
     clearSelection,
     handleTerminalClick,
     onSelectWire,

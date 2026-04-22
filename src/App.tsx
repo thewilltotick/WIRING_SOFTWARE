@@ -30,6 +30,15 @@ export default function App() {
           Enable net selection
         </label>
 
+        <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
+          Wire label mode
+          <select value={editor.wireLabelMode} onChange={(e) => editor.setWireLabelMode(e.target.value)}>
+            <option value="custom">Custom</option>
+            <option value="id">ID</option>
+            <option value="from_to">From → To</option>
+          </select>
+        </label>
+
         <button onClick={editor.clearSelection}>Clear selection</button>
         <button onClick={editor.undo} disabled={!editor.history.length}>Undo</button>
         <button onClick={editor.exportModel}>Export JSON</button>

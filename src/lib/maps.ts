@@ -1,12 +1,21 @@
 export function buildComponentMap(components: any[]) {
-  return Object.fromEntries(components.map((c) => [c.id, c]));
+  const out: Record<string, any> = {};
+  for (const component of components || []) {
+    out[component.hex_id] = component;
+  }
+  return out;
 }
 
 export function buildTerminalMap(components: any[]) {
   const out: Record<string, any> = {};
-  for (const c of components) {
-    for (const t of c.terminals || []) {
-      out[t.id] = { ...t, component_id: c.id };
+  for (const component of components || []) {
+    for (const terminal of component.terminals || []) {
+      out[terminal.id] = {
+        ...terminal,
+        component_hex_id: component.hex_id,
+        component_id: component.id,
+        component_label: component.label
+      };
     }
   }
   return out;

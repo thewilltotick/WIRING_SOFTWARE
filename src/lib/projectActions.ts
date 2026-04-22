@@ -1,4 +1,5 @@
 import { createComponentTemplate } from "./componentFactory";
+import { generateHexId } from "./id";
 
 function inferPolarity(fromTerminal: any, toTerminal: any) {
   const fromRole = String(fromTerminal.role || "");
@@ -20,6 +21,33 @@ function defaultWireColor(polarity: string) {
   return "yellow";
 }
 
+function nextNumericDisplayId(existingIds: string[], prefix: string) {
+  let max = 0;
+  for (const id of existingIds) {
+    const match = String(id).match(new RegExp(`^${prefix}(\\d+)$`));
+    if (match) {
+      max = Math.max(max, Number(match[1]));
+    }
+  }
+  return `${prefix}${max + 1}`;
+}
+
+function nextWireDisplayId(model: any) {
+  return nextNumericDisplayId((model.wires || []).map((w: any) => w.id), "W");
+}
+
+function nextComponentIndex(model: any, type: string) {
+  const prefix = `${type.toUpperCase()}_`;
+  let max = 0;
+  for (const c of model.components || []) {
+    if (String(c.id || "").startsWith(prefix)) {
+      const suffix = Number(String(c.id).slice(prefix.length));
+      if (Number.isFinite(suffix)) max = Math.max(max, suffix);
+    }
+  }
+  return max + 1;
+}
+
 export function addWire(model: any, terminalMap: Record<string, any>, fromId: string, toId: string) {
   const fromTerminal = terminalMap[fromId];
   const toTerminal = terminalMap[toId];
@@ -28,7 +56,9 @@ export function addWire(model: any, terminalMap: Record<string, any>, fromId: st
   const polarity = inferPolarity(fromTerminal, toTerminal);
 
   const newWire = {
-    id: `W${model.wires.length + 1}`,
+    hex_id: generateHexId("w"),
+    id: nextWireDisplayId(model),
+    label: "",
     from_terminal: fromId,
     to_terminal: toId,
     from_terminal_parked: null,
@@ -50,11 +80,11 @@ export function addWire(model: any, terminalMap: Record<string, any>, fromId: st
   };
 }
 
-export function updateComponentField(model: any, componentId: string, field: string, value: any) {
+export function updateComponentField(model: any, componentHexId: string, field: string, value: any) {
   return {
     ...model,
     components: model.components.map((c: any) =>
-      c.id === componentId ? { ...c, [field]: value } : c
+      c.hex_id === componentHexId ? { ...c, [field]: value } : c
     )
   };
 }
@@ -71,11 +101,11 @@ export function updateTerminalField(model: any, terminalId: string, field: strin
   };
 }
 
-export function updateWireField(model: any, wireId: string, field: string, value: any) {
+export function updateWireField(model: any, wireHexId: string, field: string, value: any) {
   return {
     ...model,
     wires: model.wires.map((w: any) => {
-      if (w.id !== wireId) return w;
+      if (w.hex_id !== wireHexId) return w;
 
       if (field.startsWith("attribution.")) {
         const subfield = field.split(".")[1];
@@ -93,30 +123,26 @@ export function updateWireField(model: any, wireId: string, field: string, value
   };
 }
 
-export function setWireWaypoints(model: any, wireId: string, waypoints: any[]) {
+export function setWireWaypoints(model: any, wireHexId: string, waypoints: any[]) {
   return {
     ...model,
     wires: model.wires.map((w: any) =>
-      w.id === wireId ? { ...w, waypoints } : w
+      w.hex_id === wireHexId ? { ...w, waypoints } : w
     )
   };
 }
 
-export function deleteWireWaypoint(model: any, wireId: string, waypointIndex: number) {
+export function deleteWireWaypoint(model: any, wireHexId: string, waypointIndex: number) {
   return {
     ...model,
     wires: model.wires.map((w: any) => {
-      if (w.id !== wireId) return w;
+      if (w.hex_id !== wireHexId) return w;
       return {
         ...w,
         waypoints: (w.waypoints || []).filter((_: any, i: number) => i !== waypointIndex)
       };
     })
   };
-}
-
-function nextComponentIndex(model: any, type: string) {
-  return model.components.filter((c: any) => c.type === type).length + 1;
 }
 
 function getInlineTerminals(component: any, type: string) {
@@ -160,11 +186,11 @@ function getInlineTerminals(component: any, type: string) {
 
 export function insertInlineComponentOnWire(
   model: any,
-  wireId: string,
+  wireHexId: string,
   componentType: string,
   position: { x: number; y: number }
 ) {
-  const wire = model.wires.find((w: any) => w.id === wireId);
+  const wire = model.wires.find((w: any) => w.hex_id === wireHexId);
   if (!wire) return model;
 
   const idx = nextComponentIndex(model, componentType);
@@ -175,17 +201,29 @@ export function insertInlineComponentOnWire(
   const inlineTerms = getInlineTerminals(component, componentType);
   if (!inlineTerms?.in || !inlineTerms?.out) return model;
 
+  const modelWithoutOriginal = {
+    ...model,
+    wires: model.wires.filter((w: any) => w.hex_id !== wireHexId)
+  };
+
   const leftWire = {
     ...wire,
-    id: `W${model.wires.length + 1}`,
+    hex_id: generateHexId("w"),
+    id: nextWireDisplayId(modelWithoutOriginal),
     to_terminal: inlineTerms.in.id,
     to_terminal_parked: null,
     waypoints: []
   };
 
+  const modelAfterLeft = {
+    ...modelWithoutOriginal,
+    wires: [...modelWithoutOriginal.wires, leftWire]
+  };
+
   const rightWire = {
     ...wire,
-    id: `W${model.wires.length + 2}`,
+    hex_id: generateHexId("w"),
+    id: nextWireDisplayId(modelAfterLeft),
     from_terminal: inlineTerms.out.id,
     from_terminal_parked: null,
     waypoints: []
@@ -195,18 +233,18 @@ export function insertInlineComponentOnWire(
     ...model,
     components: [...model.components, component],
     wires: [
-      ...model.wires.filter((w: any) => w.id !== wireId),
+      ...modelWithoutOriginal.wires,
       leftWire,
       rightWire
     ]
   };
 }
 
-export function addTerminal(model: any, componentId: string) {
+export function addTerminal(model: any, componentHexId: string) {
   return {
     ...model,
     components: model.components.map((c: any) => {
-      if (c.id !== componentId) return c;
+      if (c.hex_id !== componentHexId) return c;
 
       const idx = c.terminals.length + 1;
       const sideOptions = [
@@ -231,11 +269,11 @@ export function addTerminal(model: any, componentId: string) {
         terminals: [
           ...c.terminals,
           {
-            id: `${c.id}_TERM_${idx}`,
+            id: `${c.hex_id}_TERM_${idx}`,
             label: `T${idx}`,
             side: nextSide,
             role: "power_in_neg",
-            net_id: `${c.id}_NET_TERM_${idx}`
+            net_id: `${c.hex_id}_NET_TERM_${idx}`
           }
         ]
       };
@@ -270,22 +308,22 @@ export function deleteTerminal(model: any, terminalId: string) {
   };
 }
 
-export function deleteWire(model: any, wireId: string) {
+export function deleteWire(model: any, wireHexId: string) {
   return {
     ...model,
-    wires: model.wires.filter((w: any) => w.id !== wireId)
+    wires: model.wires.filter((w: any) => w.hex_id !== wireHexId)
   };
 }
 
-export function deleteComponent(model: any, componentId: string) {
-  const component = model.components.find((c: any) => c.id === componentId);
+export function deleteComponent(model: any, componentHexId: string) {
+  const component = model.components.find((c: any) => c.hex_id === componentHexId);
   if (!component) return model;
 
   const terminalIds = new Set(component.terminals.map((t: any) => t.id));
 
   return {
     ...model,
-    components: model.components.filter((c: any) => c.id !== componentId),
+    components: model.components.filter((c: any) => c.hex_id !== componentHexId),
     wires: model.wires.map((w: any) => {
       let next = { ...w };
       if (terminalIds.has(w.from_terminal)) {
@@ -302,7 +340,7 @@ export function deleteComponent(model: any, componentId: string) {
 }
 
 export function addComponent(model: any, type: string) {
-  const count = model.components.filter((c: any) => c.type === type).length + 1;
+  const count = nextComponentIndex(model, type);
   const component = createComponentTemplate(type, count);
 
   return {
