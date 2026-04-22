@@ -1,6 +1,5 @@
 import {
   buildRenderedPoints,
-  nearestSegmentIndex,
   segmentMidpoint,
   type Point
 } from "../lib/wireRouting";
@@ -97,7 +96,7 @@ export function CanvasView({ editor }: any) {
       <h2>Canvas</h2>
 
       <div style={{ fontSize: 12, marginBottom: 8, color: "#475569" }}>
-        Double-click a wire to add a bend on the nearest segment. Drag segment handles to move whole sections. Right-click a wire for actions.
+        Double-click a wire to add a visible bend jog. Drag blue circles to move bends. Drag blue squares to move whole sections. Right-click a wire for actions.
       </div>
 
       <div
@@ -203,18 +202,24 @@ export function CanvasView({ editor }: any) {
                     }
                     strokeWidth={wireSelected ? 5 : isHighlighted ? 4 : 3}
                     opacity={shouldFade ? 0.22 : 1}
-                    style={{ cursor: "pointer" }}
+                    style={{ cursor: "pointer", pointerEvents: "stroke" }}
                     onClick={(e) => {
                       e.stopPropagation();
                       onSelectWire(w.id);
                     }}
                     onDoubleClick={(e) => {
+                      e.preventDefault();
                       e.stopPropagation();
+
                       const rect = (e.currentTarget.ownerSVGElement as SVGSVGElement).getBoundingClientRect();
                       const x = snap((e.clientX - rect.left) / zoom);
                       const y = snap((e.clientY - rect.top) / zoom);
-                      onSelectWire(w.id);
-                      onInsertWireWaypoint(w.id, { x, y });
+                      const wireId = w.id;
+
+                      requestAnimationFrame(() => {
+                        onSelectWire(wireId);
+                        onInsertWireWaypoint(wireId, { x, y });
+                      });
                     }}
                     onContextMenu={(e) => {
                       e.preventDefault();
@@ -243,15 +248,15 @@ export function CanvasView({ editor }: any) {
                     return (
                       <rect
                         key={`${w.id}-seg-${idx}`}
-                        x={mid.x - 5}
-                        y={mid.y - 5}
-                        width={10}
-                        height={10}
+                        x={mid.x - 6}
+                        y={mid.y - 6}
+                        width={12}
+                        height={12}
                         fill="#dbeafe"
                         stroke="#2563eb"
                         strokeWidth="2"
                         rx="2"
-                        style={{ cursor: "move" }}
+                        style={{ cursor: "move", pointerEvents: "all" }}
                         onMouseDown={(e) => {
                           e.stopPropagation();
                           onStartDragWireSegment(w.id, idx, mid.x, mid.y);
@@ -265,11 +270,11 @@ export function CanvasView({ editor }: any) {
                       key={`${w.id}-wp-${idx}`}
                       cx={pt.x}
                       cy={pt.y}
-                      r="7"
+                      r="9"
                       fill="#ffffff"
                       stroke="#2563eb"
                       strokeWidth="3"
-                      style={{ cursor: "move" }}
+                      style={{ cursor: "move", pointerEvents: "all" }}
                       onMouseDown={(e) => {
                         e.stopPropagation();
                         onStartDragWireWaypoint(w.id, idx);

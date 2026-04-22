@@ -1,5 +1,7 @@
 export type Point = { x: number; y: number };
 
+const DEFAULT_JOG = 40;
+
 export function manhattanPath(start: Point, end: Point): Point[] {
   if (start.x === end.x || start.y === end.y) {
     return [start, end];
@@ -95,26 +97,46 @@ export function nearestSegmentIndex(points: Point[], p: Point): number {
   return bestIdx;
 }
 
+function clampToSegment(click: Point, a: Point, b: Point): Point {
+  if (a.x === b.x) {
+    const minY = Math.min(a.y, b.y);
+    const maxY = Math.max(a.y, b.y);
+    return { x: a.x, y: Math.max(minY, Math.min(maxY, click.y)) };
+  }
+  if (a.y === b.y) {
+    const minX = Math.min(a.x, b.x);
+    const maxX = Math.max(a.x, b.x);
+    return { x: Math.max(minX, Math.min(maxX, click.x)), y: a.y };
+  }
+  return click;
+}
+
 export function insertWaypointOnSegment(start: Point, waypoints: Point[], end: Point, click: Point): Point[] {
   const rendered = buildRenderedPoints(start, waypoints || [], end);
   const segIdx = nearestSegmentIndex(rendered, click);
-
   const a = rendered[segIdx];
   const b = rendered[segIdx + 1];
 
-  let inserted: Point;
+  const anchor = clampToSegment(click, a, b);
+  const internal = rendered.slice(1, -1);
+  const safeIdx = Math.max(0, Math.min(internal.length, segIdx));
+
+  // Create a visible orthogonal jog instead of an invisible split.
   if (a.x === b.x) {
-    inserted = { x: a.x, y: click.y };
+    // vertical segment -> jog horizontally
+    const jogA = { x: anchor.x + DEFAULT_JOG, y: anchor.y - DEFAULT_JOG / 2 };
+    const jogB = { x: anchor.x + DEFAULT_JOG, y: anchor.y + DEFAULT_JOG / 2 };
+    internal.splice(safeIdx, 0, jogA, jogB);
   } else if (a.y === b.y) {
-    inserted = { x: click.x, y: a.y };
+    // horizontal segment -> jog vertically
+    const jogA = { x: anchor.x - DEFAULT_JOG / 2, y: anchor.y + DEFAULT_JOG };
+    const jogB = { x: anchor.x + DEFAULT_JOG / 2, y: anchor.y + DEFAULT_JOG };
+    internal.splice(safeIdx, 0, jogA, jogB);
   } else {
-    inserted = click;
+    internal.splice(safeIdx, 0, anchor);
   }
 
-  const renderedInternal = rendered.slice(1, -1);
-  renderedInternal.splice(segIdx, 0, inserted);
-
-  return ensureOrthogonalWaypoints(start, renderedInternal, end);
+  return ensureOrthogonalWaypoints(start, internal, end);
 }
 
 export function moveWaypoint(start: Point, waypoints: Point[], end: Point, waypointIndex: number, point: Point): Point[] {
