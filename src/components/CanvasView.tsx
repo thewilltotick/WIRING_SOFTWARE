@@ -206,7 +206,7 @@ export function CanvasView({ editor }: any) {
 
               const wireTraceSelected =
                 viewMode === "trace" &&
-                traceWireIdSet.has(w.id);
+                traceWireIdSet.has(w.hex_id);
 
               const isHighlighted = wireSelected || wireNetSelected || wireTraceSelected;
               const shouldFade =
@@ -327,8 +327,8 @@ export function CanvasView({ editor }: any) {
               const componentOnTrace =
                 viewMode === "trace" &&
                 c.terminals.some((t: any) =>
-                  Array.from(traceWireIdSet).some((wireId) => {
-                    const wire = model.wires.find((w: any) => w.id === wireId);
+                  Array.from(traceWireIdSet).some((wireHexId) => {
+                    const wire = model.wires.find((w: any) => w.hex_id === wireHexId);
                     return wire && (wire.from_terminal === t.id || wire.to_terminal === t.id);
                   })
                 );

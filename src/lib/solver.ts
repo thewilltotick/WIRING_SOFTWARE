@@ -1,252 +1,181 @@
-import { wireResistanceOhm } from "./electrical";
-import {
-  getComponentConductionEdges,
-  getSourceTerminalCandidates,
-  getLoadTerminalCandidates,
-  isLoadComponent,
-  isSourceComponent,
-  loadSteadyCurrentFromComponent,
-  loadPeakCurrentFromComponent,
-  sourceVoltageFromComponent
-} from "./componentBehavior";
-
-type Edge = {
-  to: string;
-  kind: "wire" | "internal";
-  wire_id?: string;
-  resistance_ohm: number;
-  metadata?: Record<string, any>;
-};
-
-function addBiEdge(graph: Record<string, Edge[]>, a: string, b: string, edge: Edge) {
-  if (!graph[a]) graph[a] = [];
-  if (!graph[b]) graph[b] = [];
-  graph[a].push({ ...edge, to: b });
-  graph[b].push({ ...edge, to: a });
+function safeNumber(value: any, fallback = 0) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
 }
 
-function buildTerminalGraph(model: any) {
-  const graph: Record<string, Edge[]> = {};
+function wireResistanceOhm(awg: string, lengthFt: number) {
+  const table: Record<string, number> = {
+    "18": 0.006385,
+    "16": 0.004016,
+    "14": 0.002525,
+    "12": 0.001588,
+    "10": 0.000999,
+    "8": 0.0006282,
+    "6": 0.0003951,
+    "4": 0.0002485,
+    "2": 0.0001563,
+    "1": 0.0001239,
+    "1/0": 0.0000983,
+    "2/0": 0.0000779,
+    "3/0": 0.0000618,
+    "4/0": 0.0000490
+  };
+
+  const ohmPerFt = table[String(awg)] ?? table["12"];
+  return ohmPerFt * Math.max(0, safeNumber(lengthFt, 0));
+}
+
+function getLoadCurrent(load: any, mode: "steady" | "peak") {
+  if (mode === "peak") {
+    const peakCurrent = safeNumber(load.peak_load_current_a, 0);
+    if (peakCurrent > 0) return peakCurrent;
+
+    const peakPower = safeNumber(load.peak_load_power_w, 0);
+    const nominalVoltage = safeNumber(load.nominal_voltage_v, 0);
+    if (peakPower > 0 && nominalVoltage > 0) return peakPower / nominalVoltage;
+  }
+
+  const steadyCurrent = safeNumber(load.load_current_a, 0);
+  if (steadyCurrent > 0) return steadyCurrent;
+
+  const steadyPower = safeNumber(load.load_power_w, 0);
+  const nominalVoltage = safeNumber(load.nominal_voltage_v, 0);
+  if (steadyPower > 0 && nominalVoltage > 0) return steadyPower / nominalVoltage;
+
+  return 0;
+}
+
+function buildWireAdjacency(model: any) {
+  const byTerminal: Record<string, any[]> = {};
 
   for (const wire of model.wires || []) {
-    const resistance = wireResistanceOhm(wire.awg, Number(wire.length_ft || 0));
-    addBiEdge(graph, wire.from_terminal, wire.to_terminal, {
-      kind: "wire",
-      wire_id: wire.id,
-      resistance_ohm: resistance ?? Number.POSITIVE_INFINITY,
-      metadata: {
-        polarity: wire.polarity,
-        awg: wire.awg,
-        length_ft: wire.length_ft,
-        material: wire.material || "copper"
-      }
-    });
+    if (wire.from_terminal) {
+      byTerminal[wire.from_terminal] ||= [];
+      byTerminal[wire.from_terminal].push(wire);
+    }
+    if (wire.to_terminal) {
+      byTerminal[wire.to_terminal] ||= [];
+      byTerminal[wire.to_terminal].push(wire);
+    }
   }
+
+  return byTerminal;
+}
+
+function findSourcePositiveTerminals(model: any) {
+  const terminals: string[] = [];
 
   for (const component of model.components || []) {
-    for (const conduction of getComponentConductionEdges(component)) {
-      addBiEdge(graph, conduction.from, conduction.to, {
-        kind: "internal",
-        resistance_ohm: Math.max(0, Number(conduction.resistance_ohm ?? 0.0001)),
-        metadata: {
-          component_id: component.id,
-          component_type: component.type,
-          classification: conduction.classification
+    if (component.type === "battery") {
+      for (const terminal of component.terminals || []) {
+        if (String(terminal.role || "").includes("power_out_pos")) {
+          terminals.push(terminal.id);
         }
-      });
+      }
     }
   }
 
-  return graph;
+  return terminals;
 }
 
-function shortestPath(graph: Record<string, Edge[]>, starts: string[], targets: string[]) {
-  const targetSet = new Set(targets);
-  const dist: Record<string, number> = {};
-  const prev: Record<string, { node: string | null; edge: Edge | null }> = {};
-  const unvisited = new Set<string>();
+function reconstructPath(prev: Record<string, { via_wire_hex_id: string | null; prior_terminal: string | null }>, endTerminal: string) {
+  const wire_hex_ids: string[] = [];
+  let cursor: string | null = endTerminal;
 
-  for (const node of Object.keys(graph)) {
-    dist[node] = Number.POSITIVE_INFINITY;
-    prev[node] = { node: null, edge: null };
-    unvisited.add(node);
+  while (cursor && prev[cursor]) {
+    const step = prev[cursor];
+    if (step.via_wire_hex_id) wire_hex_ids.push(step.via_wire_hex_id);
+    cursor = step.prior_terminal;
   }
 
-  for (const s of starts) {
-    if (!graph[s]) continue;
-    dist[s] = 0;
-  }
+  wire_hex_ids.reverse();
+  return wire_hex_ids;
+}
 
-  while (unvisited.size) {
-    let current: string | null = null;
-    let bestDist = Number.POSITIVE_INFINITY;
+function bfsPathToTerminal(model: any, startTerminals: string[], targetTerminal: string) {
+  const adjacency = buildWireAdjacency(model);
+  const queue: string[] = [...startTerminals];
+  const seen = new Set<string>(startTerminals);
+  const prev: Record<string, { via_wire_hex_id: string | null; prior_terminal: string | null }> = {};
 
-    for (const node of unvisited) {
-      if (dist[node] < bestDist) {
-        bestDist = dist[node];
-        current = node;
-      }
+  while (queue.length) {
+    const terminalId = queue.shift()!;
+    if (terminalId === targetTerminal) {
+      return reconstructPath(prev, targetTerminal);
     }
 
-    if (current == null || bestDist === Number.POSITIVE_INFINITY) break;
+    for (const wire of adjacency[terminalId] || []) {
+      const neighbor = wire.from_terminal === terminalId ? wire.to_terminal : wire.from_terminal;
+      if (!neighbor || seen.has(neighbor)) continue;
 
-    unvisited.delete(current);
-
-    if (targetSet.has(current)) {
-      const path: Array<{ from: string; to: string; edge: Edge }> = [];
-      let cursor = current;
-
-      while (prev[cursor] && prev[cursor].node) {
-        const step = prev[cursor];
-        path.push({
-          from: step.node!,
-          to: cursor,
-          edge: step.edge!
-        });
-        cursor = step.node!;
-      }
-
-      path.reverse();
-      return {
-        found: true,
-        target: current,
-        path,
-        total_resistance_ohm: bestDist
+      seen.add(neighbor);
+      prev[neighbor] = {
+        via_wire_hex_id: wire.hex_id,
+        prior_terminal: terminalId
       };
-    }
-
-    for (const edge of graph[current] || []) {
-      if (!unvisited.has(edge.to)) continue;
-      const nextDist = dist[current] + edge.resistance_ohm;
-      if (nextDist < dist[edge.to]) {
-        dist[edge.to] = nextDist;
-        prev[edge.to] = { node: current, edge };
-      }
+      queue.push(neighbor);
     }
   }
 
-  return {
-    found: false,
-    target: null,
-    path: [] as Array<{ from: string; to: string; edge: Edge }>,
-    total_resistance_ohm: null as number | null
-  };
-}
-
-function getPrimarySource(model: any) {
-  const source = (model.components || []).find((c: any) => isSourceComponent(c));
-  if (!source) return null;
-  return {
-    component_id: source.id,
-    source_voltage_v: sourceVoltageFromComponent(source),
-    source_impedance_ohm: Number(source.source_impedance_ohm ?? 0)
-  };
+  return [];
 }
 
 export function solveFirstPass(model: any, terminalMap: Record<string, any>) {
-  const steadyWireUsage: Record<string, number> = {};
-  const peakWireUsage: Record<string, number> = {};
-  const steadyWireVoltageDrop: Record<string, number | null> = {};
-  const peakWireVoltageDrop: Record<string, number | null> = {};
-  const loadPathSummaries: any[] = [];
-  const graph = buildTerminalGraph(model);
+  const steady_wire_current_map: Record<string, number> = {};
+  const peak_wire_current_map: Record<string, number> = {};
+  const steady_wire_voltage_drop_map: Record<string, number> = {};
+  const peak_wire_voltage_drop_map: Record<string, number> = {};
+  const load_path_summaries: any[] = [];
 
-  for (const wire of model.wires || []) {
-    steadyWireUsage[wire.id] = 0;
-    peakWireUsage[wire.id] = 0;
-    steadyWireVoltageDrop[wire.id] = null;
-    peakWireVoltageDrop[wire.id] = null;
-  }
-
-  const sourceComponents = (model.components || []).filter((c: any) => isSourceComponent(c));
-  const sourcePosCandidates = sourceComponents.flatMap((c: any) => getSourceTerminalCandidates(c).pos);
-  const sourceNegCandidates = sourceComponents.flatMap((c: any) => getSourceTerminalCandidates(c).neg);
-  const primarySource = getPrimarySource(model);
+  const sourcePositiveTerminals = findSourcePositiveTerminals(model);
+  const wireByHex: Record<string, any> = Object.fromEntries((model.wires || []).map((w: any) => [w.hex_id, w]));
 
   for (const component of model.components || []) {
-    if (!isLoadComponent(component)) continue;
+    if (component.type !== "load") continue;
 
-    const steadyCurrent = loadSteadyCurrentFromComponent(component);
-    const peakCurrentRaw = loadPeakCurrentFromComponent(component);
-    const peakCurrent = peakCurrentRaw > 0 ? peakCurrentRaw : steadyCurrent;
-    const surgeDurationMs = Number(component.peak_duration_ms ?? 0);
-    const dutyCyclePercent = Number(component.duty_cycle_percent ?? 100);
-    const loadTerms = getLoadTerminalCandidates(component);
+    const posTerminal = (component.terminals || []).find((t: any) => String(t.role || "").includes("power_in_pos"));
+    if (!posTerminal) continue;
 
-    const posPath = shortestPath(graph, sourcePosCandidates, loadTerms.pos);
-    const negPath = shortestPath(graph, loadTerms.neg, sourceNegCandidates);
+    const steadyCurrent = getLoadCurrent(component, "steady");
+    const peakCurrent = getLoadCurrent(component, "peak");
+    const pathWireHexIds = bfsPathToTerminal(model, sourcePositiveTerminals, posTerminal.id);
 
-    const positivePathWireIds = posPath.path.filter((s) => s.edge.kind === "wire").map((s) => s.edge.wire_id);
-    const negativePathWireIds = negPath.path.filter((s) => s.edge.kind === "wire").map((s) => s.edge.wire_id);
+    let steadyDrop = 0;
+    let peakDrop = 0;
 
-    if (posPath.found && negPath.found) {
-      if (steadyCurrent > 0) {
-        for (const wireId of positivePathWireIds) if (wireId) steadyWireUsage[wireId] += steadyCurrent;
-        for (const wireId of negativePathWireIds) if (wireId) steadyWireUsage[wireId] += steadyCurrent;
-      }
+    for (const wireHexId of pathWireHexIds) {
+      const wire = wireByHex[wireHexId];
+      if (!wire) continue;
 
-      if (peakCurrent > 0) {
-        for (const wireId of positivePathWireIds) if (wireId) peakWireUsage[wireId] += peakCurrent;
-        for (const wireId of negativePathWireIds) if (wireId) peakWireUsage[wireId] += peakCurrent;
-      }
+      const resistance = wireResistanceOhm(wire.awg, wire.length_ft);
+
+      steady_wire_current_map[wireHexId] = (steady_wire_current_map[wireHexId] || 0) + steadyCurrent;
+      peak_wire_current_map[wireHexId] = (peak_wire_current_map[wireHexId] || 0) + peakCurrent;
+
+      steady_wire_voltage_drop_map[wireHexId] = (steady_wire_voltage_drop_map[wireHexId] || 0) + resistance * steadyCurrent;
+      peak_wire_voltage_drop_map[wireHexId] = (peak_wire_voltage_drop_map[wireHexId] || 0) + resistance * peakCurrent;
+
+      steadyDrop += resistance * steadyCurrent;
+      peakDrop += resistance * peakCurrent;
     }
 
-    const steadyPathResistance =
-      (typeof posPath.total_resistance_ohm === "number" ? posPath.total_resistance_ohm : 0) +
-      (typeof negPath.total_resistance_ohm === "number" ? negPath.total_resistance_ohm : 0);
-
-    const peakPathResistance = steadyPathResistance;
-
-    const sourceVoltage = primarySource?.source_voltage_v ?? Number(component.nominal_voltage_v ?? 0);
-    const sourceImpedance = primarySource?.source_impedance_ohm ?? 0;
-
-    const steadyDeliveredVoltage =
-      posPath.found && negPath.found
-        ? sourceVoltage - steadyCurrent * (steadyPathResistance + sourceImpedance)
-        : null;
-
-    const peakDeliveredVoltage =
-      posPath.found && negPath.found
-        ? sourceVoltage - peakCurrent * (peakPathResistance + sourceImpedance)
-        : null;
-
-    loadPathSummaries.push({
+    load_path_summaries.push({
+      component_hex_id: component.hex_id,
       component_id: component.id,
+      component_label: component.label,
+      all_path_wire_hex_ids: pathWireHexIds,
+      total_steady_voltage_drop_v: steadyDrop,
+      total_peak_voltage_drop_v: peakDrop,
       steady_current_a: steadyCurrent,
-      peak_current_a: peakCurrent,
-      peak_duration_ms: surgeDurationMs,
-      duty_cycle_percent: dutyCyclePercent,
-      positive_path_found: posPath.found,
-      negative_path_found: negPath.found,
-      positive_path_resistance_ohm: posPath.total_resistance_ohm,
-      negative_path_resistance_ohm: negPath.total_resistance_ohm,
-      total_path_resistance_ohm: steadyPathResistance,
-      estimated_steady_load_voltage_v: steadyDeliveredVoltage,
-      estimated_peak_load_voltage_v: peakDeliveredVoltage,
-      positive_path_wire_ids: positivePathWireIds,
-      negative_path_wire_ids: negativePathWireIds,
-      all_path_wire_ids: [...new Set([...positivePathWireIds, ...negativePathWireIds].filter(Boolean))]
+      peak_current_a: peakCurrent
     });
   }
 
-  for (const wire of model.wires || []) {
-    const resistance = wireResistanceOhm(wire.awg, Number(wire.length_ft || 0));
-    steadyWireVoltageDrop[wire.id] = resistance != null ? resistance * (steadyWireUsage[wire.id] ?? 0) : null;
-    peakWireVoltageDrop[wire.id] = resistance != null ? resistance * (peakWireUsage[wire.id] ?? 0) : null;
-  }
-
-  const sourceSummaries = sourceComponents.map((c: any) => ({
-    component_id: c.id,
-    source_voltage_v: sourceVoltageFromComponent(c),
-    source_impedance_ohm: Number(c.source_impedance_ohm ?? 0)
-  }));
-
   return {
-    steady_wire_current_map: steadyWireUsage,
-    peak_wire_current_map: peakWireUsage,
-    steady_wire_voltage_drop_map: steadyWireVoltageDrop,
-    peak_wire_voltage_drop_map: peakWireVoltageDrop,
-    source_summaries: sourceSummaries,
-    load_path_summaries: loadPathSummaries
+    steady_wire_current_map,
+    peak_wire_current_map,
+    steady_wire_voltage_drop_map,
+    peak_wire_voltage_drop_map,
+    load_path_summaries
   };
 }
