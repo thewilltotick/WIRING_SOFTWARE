@@ -14,6 +14,7 @@ export function createComponentTemplate(type: string, idx: number) {
 
   if (type === "battery") {
     base.nominal_voltage_v = 12;
+    base.source_impedance_ohm = 0.01;
     base.terminals = [
       { id: `${id}_POS`, label: "+", side: "right_center", role: "power_out_pos", net_id: `${id}_NET_POS` },
       { id: `${id}_NEG`, label: "-", side: "bottom_center", role: "power_out_neg", net_id: `${id}_NET_NEG` }
@@ -38,6 +39,13 @@ export function createComponentTemplate(type: string, idx: number) {
     ];
   } else if (type === "load") {
     base.load_current_a = 1;
+    base.load_power_w = 0;
+    base.peak_load_current_a = 0;
+    base.peak_load_power_w = 0;
+    base.peak_duration_ms = 0;
+    base.duty_cycle_percent = 100;
+    base.nominal_voltage_v = 12;
+    base.min_operating_voltage_v = 11;
     base.terminals = [
       { id: `${id}_POS`, label: "+", side: "left_top", role: "power_in_pos", net_id: `${id}_NET_POS` },
       { id: `${id}_NEG`, label: "-", side: "left_bottom", role: "power_in_neg", net_id: `${id}_NET_NEG` }
@@ -56,18 +64,21 @@ export function createComponentTemplate(type: string, idx: number) {
     ];
   } else if (type === "fuse") {
     base.fuse_rating_a = 30;
+    base.is_closed = true;
     base.terminals = [
       { id: `${id}_IN`, label: "IN", side: "left_center", role: "power_in_pos", net_id: `${id}_NET_IN` },
       { id: `${id}_OUT`, label: "OUT", side: "right_center", role: "power_out_pos", net_id: `${id}_NET_OUT` }
     ];
   } else if (type === "breaker") {
     base.breaker_rating_a = 30;
+    base.is_closed = true;
     base.terminals = [
       { id: `${id}_IN`, label: "IN", side: "left_center", role: "power_in_pos", net_id: `${id}_NET_IN` },
       { id: `${id}_OUT`, label: "OUT", side: "right_center", role: "power_out_pos", net_id: `${id}_NET_OUT` }
     ];
   } else if (type === "switch") {
     base.switch_poles = 1;
+    base.switch_state = "closed";
     base.width = 190;
     base.terminals = [
       { id: `${id}_COM`, label: "COM", side: "left_center", role: "power_in_pos", net_id: `${id}_NET_COM` },
@@ -79,6 +90,7 @@ export function createComponentTemplate(type: string, idx: number) {
     base.height = 110;
     base.relay_coil_voltage_v = 12;
     base.relay_contact_rating_a = 20;
+    base.relay_state = "no";
     base.terminals = [
       { id: `${id}_COIL_A`, label: "COIL A", side: "left_top", role: "coil_pos", net_id: `${id}_NET_COIL_A` },
       { id: `${id}_COIL_B`, label: "COIL B", side: "left_bottom", role: "coil_neg", net_id: `${id}_NET_COIL_B` },

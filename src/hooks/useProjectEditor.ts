@@ -94,10 +94,10 @@ export function useProjectEditor() {
 
   const warnings = useMemo(() => {
     return [
-      ...validateModel(model, terminalMap),
+      ...validateModel(model, terminalMap, firstPassSolution),
       ...findSuspiciousNetUsage(model)
     ];
-  }, [model, terminalMap]);
+  }, [model, terminalMap, firstPassSolution]);
 
   const filteredComponents = useMemo(() => {
     const q = search.trim().toLowerCase();

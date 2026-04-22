@@ -8,6 +8,8 @@ export function SolverPrepPanel({ editor }: any) {
   } = editor;
 
   const loadSummaries = firstPassSolution.load_path_summaries || [];
+  const selectedSummary =
+    loadSummaries.find((summary: any) => summary.component_id === selectedTraceLoadId) || null;
 
   return (
     <div style={{ border: "1px solid #ddd", borderRadius: 8, padding: 12, background: "#fff", marginTop: 16 }}>
@@ -30,14 +32,28 @@ export function SolverPrepPanel({ editor }: any) {
           <option value="">No trace selected</option>
           {loadSummaries.map((summary: any) => (
             <option key={summary.component_id} value={summary.component_id}>
-              {summary.component_id} · {summary.load_current_a} A
+              {summary.component_id} · steady {summary.steady_current_a} A · peak {summary.peak_current_a} A
             </option>
           ))}
         </select>
       </div>
 
+      {selectedSummary && (
+        <div style={{ marginBottom: 10, padding: 8, background: "#f8fafc", borderRadius: 6 }}>
+          <div style={{ fontWeight: "bold" }}>{selectedSummary.component_id}</div>
+          <div>Steady current: {selectedSummary.steady_current_a} A</div>
+          <div>Peak current: {selectedSummary.peak_current_a} A</div>
+          <div>Duty cycle: {selectedSummary.duty_cycle_percent}%</div>
+          <div>Positive path R: {typeof selectedSummary.positive_path_resistance_ohm === "number" ? selectedSummary.positive_path_resistance_ohm.toFixed(6) : "n/a"} Ω</div>
+          <div>Negative path R: {typeof selectedSummary.negative_path_resistance_ohm === "number" ? selectedSummary.negative_path_resistance_ohm.toFixed(6) : "n/a"} Ω</div>
+          <div>Total path R: {typeof selectedSummary.total_path_resistance_ohm === "number" ? selectedSummary.total_path_resistance_ohm.toFixed(6) : "n/a"} Ω</div>
+          <div>Estimated steady load voltage: {typeof selectedSummary.estimated_steady_load_voltage_v === "number" ? selectedSummary.estimated_steady_load_voltage_v.toFixed(3) : "n/a"} V</div>
+          <div>Estimated peak load voltage: {typeof selectedSummary.estimated_peak_load_voltage_v === "number" ? selectedSummary.estimated_peak_load_voltage_v.toFixed(3) : "n/a"} V</div>
+        </div>
+      )}
+
       <div style={{ marginBottom: 10 }}>
-        <div style={{ fontWeight: "bold" }}>First-pass path solution</div>
+        <div style={{ fontWeight: "bold" }}>First-pass weighted solution</div>
         <div>Sources tracked: {(firstPassSolution.source_summaries || []).length}</div>
         <div>Loads traced: {loadSummaries.length}</div>
       </div>
