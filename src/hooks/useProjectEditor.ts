@@ -46,7 +46,7 @@ function normalizeModel(candidate: any) {
   const componentSeen = new Set<string>();
   const wireSeen = new Set<string>();
 
-  const normalizedComponents = (Array.isArray(candidate.components) ? candidate.components : []).map((c: any) => {
+  const normalizedComponents = (Array.isArray(candidate.components) ? candidate.components : []).map((c: any, idx: number) => {
     let hex_id = String(c.hex_id || "");
     if (!hex_id || componentSeen.has(hex_id)) {
       do {
@@ -58,8 +58,8 @@ function normalizeModel(candidate: any) {
     return {
       ...c,
       hex_id,
-      id: c.id ?? c.label ?? "COMP",
-      label: c.label ?? c.id ?? "Component",
+      id: c.id ?? `COMP_${idx + 1}`,
+      label: c.label ?? c.id ?? `Component ${idx + 1}`,
       terminals: Array.isArray(c.terminals) ? c.terminals : []
     };
   });
@@ -98,9 +98,9 @@ export function useProjectEditor() {
   const [model, setModel] = useState(() => {
     try {
       const loaded = loadModelFromStorage();
-      return loaded ? normalizeModel(loaded) : DEFAULT_MODEL;
+      return normalizeModel(loaded || DEFAULT_MODEL);
     } catch {
-      return DEFAULT_MODEL;
+      return normalizeModel(DEFAULT_MODEL);
     }
   });
 
@@ -196,7 +196,8 @@ export function useProjectEditor() {
     setHistory((prevHistory) => {
       const { history: nextHistory, previous } = popHistory(prevHistory);
       if (previous) {
-        setModel(previous);
+        const normalized = normalizeModel(previous);
+        setModel(normalized);
         setSelectedWireHexId(null);
         setWireStartTerminalId(null);
         setDraggingWireWaypoint(null);
@@ -484,10 +485,11 @@ export function useProjectEditor() {
   }
 
   function resetModel() {
+    const normalized = normalizeModel(DEFAULT_MODEL);
     setHistory((h) => pushHistory(h, model));
-    setModel(DEFAULT_MODEL);
-    setSelectedComponentHexId(DEFAULT_MODEL.components[0]?.hex_id ?? null);
-    setSelectedWireHexId(DEFAULT_MODEL.wires[0]?.hex_id ?? null);
+    setModel(normalized);
+    setSelectedComponentHexId(normalized.components[0]?.hex_id ?? null);
+    setSelectedWireHexId(normalized.wires[0]?.hex_id ?? null);
     setSelectedNetId(null);
     setSelectedTraceLoadId(null);
     setViewMode("normal");

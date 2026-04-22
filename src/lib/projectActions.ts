@@ -25,9 +25,7 @@ function nextNumericDisplayId(existingIds: string[], prefix: string) {
   let max = 0;
   for (const id of existingIds) {
     const match = String(id).match(new RegExp(`^${prefix}(\\d+)$`));
-    if (match) {
-      max = Math.max(max, Number(match[1]));
-    }
+    if (match) max = Math.max(max, Number(match[1]));
   }
   return `${prefix}${max + 1}`;
 }
@@ -325,7 +323,7 @@ export function deleteComponent(model: any, componentHexId: string) {
     ...model,
     components: model.components.filter((c: any) => c.hex_id !== componentHexId),
     wires: model.wires.map((w: any) => {
-      let next = { ...w };
+      const next = { ...w };
       if (terminalIds.has(w.from_terminal)) {
         next.from_terminal_parked = w.from_terminal;
         next.from_terminal = null;

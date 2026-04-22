@@ -56,8 +56,8 @@ function getWireDisplayLabel(wire: any, terminalMap: Record<string, any>, mode: 
   if (mode === "id") return wire.id || "";
   if (mode === "custom") return wire.label || wire.id || "";
 
-  const from = wire.from_terminal ? (terminalMap[wire.from_terminal]?.label || terminalMap[wire.from_terminal]?.id || "from") : "parked";
-  const to = wire.to_terminal ? (terminalMap[wire.to_terminal]?.label || terminalMap[wire.to_terminal]?.id || "to") : "parked";
+  const from = wire.from_terminal ? (terminalMap[wire.from_terminal]?.label || "from") : "parked";
+  const to = wire.to_terminal ? (terminalMap[wire.to_terminal]?.label || "to") : "parked";
   return `${from} → ${to}`;
 }
 
