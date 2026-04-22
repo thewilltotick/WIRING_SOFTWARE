@@ -12,7 +12,8 @@ import {
   deleteComponent,
   addComponent,
   setWireWaypoints,
-  deleteWireWaypoint
+  deleteWireWaypoint,
+  insertInlineComponentOnWire
 } from "../lib/projectActions";
 import { validateModel } from "../lib/validate";
 import { pushHistory, popHistory } from "../lib/history";
@@ -44,7 +45,15 @@ function normalizeModel(candidate: any) {
     nets: Array.isArray(candidate.nets) ? candidate.nets : [],
     components: Array.isArray(candidate.components) ? candidate.components : [],
     wires: Array.isArray(candidate.wires)
-      ? candidate.wires.map((w: any) => ({ ...w, waypoints: Array.isArray(w.waypoints) ? w.waypoints : [] }))
+      ? candidate.wires.map((w: any) => ({
+          ...w,
+          from_terminal: w.from_terminal ?? null,
+          to_terminal: w.to_terminal ?? null,
+          from_terminal_parked: w.from_terminal_parked ?? null,
+          to_terminal_parked: w.to_terminal_parked ?? null,
+          route_locked: !!w.route_locked,
+          waypoints: Array.isArray(w.waypoints) ? w.waypoints : []
+        }))
       : [],
   };
 }
@@ -66,6 +75,7 @@ export function useProjectEditor() {
   const [selectedNetId, setSelectedNetId] = useState<string | null>(null);
   const [selectedTraceLoadId, setSelectedTraceLoadId] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<"normal" | "net" | "trace">("normal");
+  const [enableNetSelection, setEnableNetSelection] = useState(false);
   const [newComponentType, setNewComponentType] = useState<string>("load");
   const [draggingComponentId, setDraggingComponentId] = useState<string | null>(null);
   const [draggingWireWaypoint, setDraggingWireWaypoint] = useState<{ wireId: string; waypointIndex: number } | null>(null);
@@ -89,6 +99,13 @@ export function useProjectEditor() {
       saveModelToStorage(model);
     } catch {}
   }, [model]);
+
+  useEffect(() => {
+    if (!enableNetSelection) {
+      setSelectedNetId(null);
+      if (viewMode === "net") setViewMode("normal");
+    }
+  }, [enableNetSelection, viewMode]);
 
   const componentMap = useMemo(() => buildComponentMap(model.components), [model.components]);
   const terminalMap = useMemo(() => buildTerminalMap(model.components), [model.components]);
@@ -152,11 +169,19 @@ export function useProjectEditor() {
     });
   }
 
+  function clearSelection() {
+    setSelectedWireId(null);
+    setSelectedNetId(null);
+    setSelectedTraceLoadId(null);
+    setViewMode("normal");
+    setWireContextMenu(null);
+  }
+
   function handleTerminalClick(terminalId: string) {
     setWireContextMenu(null);
 
     const term = terminalMap[terminalId];
-    if (term) {
+    if (term && enableNetSelection) {
       setSelectedNetId(term.net_id);
       setSelectedWireId(null);
       setSelectedTraceLoadId(null);
@@ -186,6 +211,11 @@ export function useProjectEditor() {
   }
 
   function onSelectNet(netId: string | null) {
+    if (!enableNetSelection) {
+      setSelectedNetId(null);
+      if (viewMode === "net") setViewMode("normal");
+      return;
+    }
     setSelectedNetId(netId);
     setSelectedWireId(null);
     setSelectedTraceLoadId(null);
@@ -213,6 +243,11 @@ export function useProjectEditor() {
     setWireContextMenu(null);
   }
 
+  function onInsertInlineComponent(wireId: string, componentType: string, point: { x: number; y: number }) {
+    commit((prev) => insertInlineComponentOnWire(prev, wireId, componentType, point));
+    setWireContextMenu(null);
+  }
+
   function onUpdateComponentField(componentId: string, field: string, value: any) {
     commit((prev) => updateComponentField(prev, componentId, field, value));
   }
@@ -229,53 +264,62 @@ export function useProjectEditor() {
     return model.wires.find((w: any) => w.id === wireId);
   }
 
+  function parkedPointFromTerminalId(terminalId: string | null) {
+    if (!terminalId) return { x: 100, y: 100 };
+    const anyComponent = model.components.find((c: any) => c.terminals.some((t: any) => t.id === terminalId));
+    if (!anyComponent) return { x: 100, y: 100 };
+    return { x: anyComponent.x, y: anyComponent.y };
+  }
+
   function getWireEndpoints(wireId: string) {
     const wire = getWireById(wireId);
     if (!wire) return null;
 
-    const fromTerminal = terminalMap[wire.from_terminal];
-    const toTerminal = terminalMap[wire.to_terminal];
-    if (!fromTerminal || !toTerminal) return null;
+    const resolveTerminalPoint = (terminalId: string | null, parkedTerminalId: string | null) => {
+      if (terminalId) {
+        const terminal = terminalMap[terminalId];
+        if (terminal) {
+          const comp = componentMap[terminal.component_id];
+          if (comp) {
+            const x = comp.x;
+            const y = comp.y;
+            const w = comp.width;
+            const h = comp.height;
+            const left = x - w / 2;
+            const right = x + w / 2;
+            const top = y - h / 2;
+            const bottom = y + h / 2;
+            const quarterXLeft = x - w / 4;
+            const quarterXRight = x + w / 4;
+            const quarterYTop = y - h / 4;
+            const quarterYBottom = y + h / 4;
 
-    const fromComp = componentMap[fromTerminal.component_id];
-    const toComp = componentMap[toTerminal.component_id];
-    if (!fromComp || !toComp) return null;
-
-    const getTerminalPosition = (component: any, terminal: any) => {
-      const x = component.x;
-      const y = component.y;
-      const w = component.width;
-      const h = component.height;
-      const left = x - w / 2;
-      const right = x + w / 2;
-      const top = y - h / 2;
-      const bottom = y + h / 2;
-      const quarterXLeft = x - w / 4;
-      const quarterXRight = x + w / 4;
-      const quarterYTop = y - h / 4;
-      const quarterYBottom = y + h / 4;
-
-      switch (terminal.side) {
-        case "left_top": return { x: left, y: quarterYTop };
-        case "left_center": return { x: left, y };
-        case "left_bottom": return { x: left, y: quarterYBottom };
-        case "right_top": return { x: right, y: quarterYTop };
-        case "right_center": return { x: right, y };
-        case "right_bottom": return { x: right, y: quarterYBottom };
-        case "top_left": return { x: quarterXLeft, y: top };
-        case "top_center": return { x, y: top };
-        case "top_right": return { x: quarterXRight, y: top };
-        case "bottom_left": return { x: quarterXLeft, y: bottom };
-        case "bottom_center": return { x, y: bottom };
-        case "bottom_right": return { x: quarterXRight, y: bottom };
-        default: return { x, y: bottom };
+            switch (terminal.side) {
+              case "left_top": return { x: left, y: quarterYTop };
+              case "left_center": return { x: left, y };
+              case "left_bottom": return { x: left, y: quarterYBottom };
+              case "right_top": return { x: right, y: quarterYTop };
+              case "right_center": return { x: right, y };
+              case "right_bottom": return { x: right, y: quarterYBottom };
+              case "top_left": return { x: quarterXLeft, y: top };
+              case "top_center": return { x, y: top };
+              case "top_right": return { x: quarterXRight, y: top };
+              case "bottom_left": return { x: quarterXLeft, y: bottom };
+              case "bottom_center": return { x, y: bottom };
+              case "bottom_right": return { x: quarterXRight, y: bottom };
+              default: return { x, y: bottom };
+            }
+          }
+        }
       }
+      return parkedPointFromTerminalId(parkedTerminalId);
     };
 
     return {
-      start: getTerminalPosition(fromComp, fromTerminal),
-      end: getTerminalPosition(toComp, toTerminal),
-      waypoints: wire.waypoints || []
+      start: resolveTerminalPoint(wire.from_terminal, wire.from_terminal_parked),
+      end: resolveTerminalPoint(wire.to_terminal, wire.to_terminal_parked),
+      waypoints: wire.waypoints || [],
+      route_locked: !!wire.route_locked
     };
   }
 
@@ -286,7 +330,13 @@ export function useProjectEditor() {
       setWireWaypoints(
         prev,
         wireId,
-        insertWaypointOnSegment(endpoints.start, endpoints.waypoints, endpoints.end, point)
+        insertWaypointOnSegment(
+          endpoints.start,
+          endpoints.waypoints,
+          endpoints.end,
+          point,
+          endpoints.route_locked
+        )
       )
     );
   }
@@ -304,7 +354,14 @@ export function useProjectEditor() {
       setWireWaypoints(
         prev,
         wireId,
-        moveWaypoint(endpoints.start, endpoints.waypoints, endpoints.end, waypointIndex, point)
+        moveWaypoint(
+          endpoints.start,
+          endpoints.waypoints,
+          endpoints.end,
+          waypointIndex,
+          point,
+          endpoints.route_locked
+        )
       )
     );
   }
@@ -332,7 +389,14 @@ export function useProjectEditor() {
       setWireWaypoints(
         prev,
         wireId,
-        moveSegment(endpoints.start, endpoints.waypoints, endpoints.end, segmentIndex, { x: dx, y: dy })
+        moveSegment(
+          endpoints.start,
+          endpoints.waypoints,
+          endpoints.end,
+          segmentIndex,
+          { x: dx, y: dy },
+          endpoints.route_locked
+        )
       )
     );
 
@@ -495,6 +559,7 @@ export function useProjectEditor() {
     selectedTraceSummary,
     traceWireIdSet,
     viewMode,
+    enableNetSelection,
     newComponentType,
     draggingComponentId,
     draggingWireWaypoint,
@@ -521,12 +586,15 @@ export function useProjectEditor() {
     setSnapToGrid,
     setSearch,
     setImportText,
+    setEnableNetSelection,
+    clearSelection,
     handleTerminalClick,
     onSelectWire,
     onSelectNet,
     onSelectTraceLoad,
     onOpenWireContextMenu,
     onCloseWireContextMenu,
+    onInsertInlineComponent,
     onUpdateComponentField,
     onUpdateTerminalField,
     onUpdateWireField,

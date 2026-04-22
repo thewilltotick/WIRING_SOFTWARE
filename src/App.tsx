@@ -25,8 +25,12 @@ export default function App() {
           Show wire labels
         </label>
 
-        <button onClick={() => editor.onSelectNet(null)}>Clear net highlight</button>
-        <button onClick={() => editor.setSelectedWireId(null)}>Clear wire selection</button>
+        <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
+          <input type="checkbox" checked={editor.enableNetSelection} onChange={(e) => editor.setEnableNetSelection(e.target.checked)} />
+          Enable net selection
+        </label>
+
+        <button onClick={editor.clearSelection}>Clear selection</button>
         <button onClick={editor.undo} disabled={!editor.history.length}>Undo</button>
         <button onClick={editor.exportModel}>Export JSON</button>
 

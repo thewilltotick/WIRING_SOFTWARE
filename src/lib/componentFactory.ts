@@ -94,9 +94,9 @@ export function createComponentTemplate(type: string, idx: number) {
     base.terminals = [
       { id: `${id}_COIL_A`, label: "COIL A", side: "left_top", role: "coil_pos", net_id: `${id}_NET_COIL_A` },
       { id: `${id}_COIL_B`, label: "COIL B", side: "left_bottom", role: "coil_neg", net_id: `${id}_NET_COIL_B` },
-      { id: `${id}_COM`, label: "COM", side: "right_center", role: "power_in_pos", net_id: `${id}_NET_COM` },
-      { id: `${id}_NO`, label: "NO", side: "top_right", role: "power_out_pos", net_id: `${id}_NET_NO` },
-      { id: `${id}_NC`, label: "NC", side: "bottom_right", role: "power_out_pos", net_id: `${id}_NET_NC` }
+      { id: `${id}_COM`, label: "COM", side: "left_center", role: "power_in_pos", net_id: `${id}_NET_COM` },
+      { id: `${id}_NO`, label: "NO", side: "right_top", role: "power_out_pos", net_id: `${id}_NET_NO` },
+      { id: `${id}_NC`, label: "NC", side: "right_bottom", role: "power_out_pos", net_id: `${id}_NET_NC` }
     ];
   } else if (type === "resistor") {
     base.resistor_ohm = 1000;

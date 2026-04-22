@@ -31,6 +31,9 @@ export function addWire(model: any, terminalMap: Record<string, any>, fromId: st
     id: `W${model.wires.length + 1}`,
     from_terminal: fromId,
     to_terminal: toId,
+    from_terminal_parked: null,
+    to_terminal_parked: null,
+    route_locked: false,
     polarity,
     awg: "12",
     length_ft: 2,
@@ -112,6 +115,93 @@ export function deleteWireWaypoint(model: any, wireId: string, waypointIndex: nu
   };
 }
 
+function nextComponentIndex(model: any, type: string) {
+  return model.components.filter((c: any) => c.type === type).length + 1;
+}
+
+function getInlineTerminals(component: any, type: string) {
+  if (type === "fuse" || type === "breaker") {
+    return {
+      in: component.terminals.find((t: any) => t.id.endsWith("_IN")),
+      out: component.terminals.find((t: any) => t.id.endsWith("_OUT"))
+    };
+  }
+
+  if (type === "switch") {
+    return {
+      in: component.terminals.find((t: any) => t.id.endsWith("_COM")),
+      out: component.terminals.find((t: any) => t.id.endsWith("_NO"))
+    };
+  }
+
+  if (type === "relay") {
+    return {
+      in: component.terminals.find((t: any) => t.id.endsWith("_COM")),
+      out: component.terminals.find((t: any) => t.id.endsWith("_NO"))
+    };
+  }
+
+  if (type === "shunt") {
+    return {
+      in: component.terminals.find((t: any) => t.id.endsWith("_LINE_A")),
+      out: component.terminals.find((t: any) => t.id.endsWith("_LINE_B"))
+    };
+  }
+
+  if (type === "resistor") {
+    return {
+      in: component.terminals.find((t: any) => t.id.endsWith("_A")),
+      out: component.terminals.find((t: any) => t.id.endsWith("_B"))
+    };
+  }
+
+  return null;
+}
+
+export function insertInlineComponentOnWire(
+  model: any,
+  wireId: string,
+  componentType: string,
+  position: { x: number; y: number }
+) {
+  const wire = model.wires.find((w: any) => w.id === wireId);
+  if (!wire) return model;
+
+  const idx = nextComponentIndex(model, componentType);
+  const component = createComponentTemplate(componentType, idx);
+  component.x = position.x;
+  component.y = position.y;
+
+  const inlineTerms = getInlineTerminals(component, componentType);
+  if (!inlineTerms?.in || !inlineTerms?.out) return model;
+
+  const leftWire = {
+    ...wire,
+    id: `W${model.wires.length + 1}`,
+    to_terminal: inlineTerms.in.id,
+    to_terminal_parked: null,
+    waypoints: []
+  };
+
+  const rightWire = {
+    ...wire,
+    id: `W${model.wires.length + 2}`,
+    from_terminal: inlineTerms.out.id,
+    from_terminal_parked: null,
+    waypoints: []
+  };
+
+  return {
+    ...model,
+    components: [...model.components, component],
+    wires: [
+      ...model.wires.filter((w: any) => w.id !== wireId),
+      leftWire,
+      rightWire
+    ]
+  };
+}
+
 export function addTerminal(model: any, componentId: string) {
   return {
     ...model,
@@ -160,9 +250,23 @@ export function deleteTerminal(model: any, terminalId: string) {
       ...c,
       terminals: c.terminals.filter((t: any) => t.id !== terminalId)
     })),
-    wires: model.wires.filter(
-      (w: any) => w.from_terminal !== terminalId && w.to_terminal !== terminalId
-    )
+    wires: model.wires.map((w: any) => {
+      if (w.from_terminal === terminalId) {
+        return {
+          ...w,
+          from_terminal: null,
+          from_terminal_parked: w.from_terminal
+        };
+      }
+      if (w.to_terminal === terminalId) {
+        return {
+          ...w,
+          to_terminal: null,
+          to_terminal_parked: w.to_terminal
+        };
+      }
+      return w;
+    })
   };
 }
 
@@ -182,9 +286,18 @@ export function deleteComponent(model: any, componentId: string) {
   return {
     ...model,
     components: model.components.filter((c: any) => c.id !== componentId),
-    wires: model.wires.filter(
-      (w: any) => !terminalIds.has(w.from_terminal) && !terminalIds.has(w.to_terminal)
-    )
+    wires: model.wires.map((w: any) => {
+      let next = { ...w };
+      if (terminalIds.has(w.from_terminal)) {
+        next.from_terminal_parked = w.from_terminal;
+        next.from_terminal = null;
+      }
+      if (terminalIds.has(w.to_terminal)) {
+        next.to_terminal_parked = w.to_terminal;
+        next.to_terminal = null;
+      }
+      return next;
+    })
   };
 }
 

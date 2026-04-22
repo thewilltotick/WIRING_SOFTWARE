@@ -50,6 +50,8 @@ function polylinePath(points: Point[]) {
   return points.map((p, i) => `${i === 0 ? "M" : "L"} ${p.x} ${p.y}`).join(" ");
 }
 
+const INLINE_TYPES = ["fuse", "breaker", "switch", "shunt", "resistor", "relay"];
+
 export function CanvasView({ editor }: any) {
   const {
     model,
@@ -75,6 +77,7 @@ export function CanvasView({ editor }: any) {
     onSelectNet,
     onOpenWireContextMenu,
     onCloseWireContextMenu,
+    onInsertInlineComponent,
     onInsertWireWaypoint,
     onStartDragWireWaypoint,
     onMoveWireWaypoint,
@@ -394,7 +397,7 @@ export function CanvasView({ editor }: any) {
             borderRadius: 8,
             boxShadow: "0 10px 25px rgba(0,0,0,0.12)",
             padding: 6,
-            minWidth: 180
+            minWidth: 220
           }}
           onClick={(e) => e.stopPropagation()}
         >
@@ -420,6 +423,26 @@ export function CanvasView({ editor }: any) {
           >
             Add bend joint
           </button>
+
+          <div style={{ borderTop: "1px solid #e2e8f0", margin: "6px 0" }} />
+
+          {INLINE_TYPES.map((type) => (
+            <button
+              key={type}
+              style={{ display: "block", width: "100%", textAlign: "left", padding: 8 }}
+              onClick={() =>
+                onInsertInlineComponent(wireContextMenu.wireId, type, {
+                  x: wireContextMenu.canvasX,
+                  y: wireContextMenu.canvasY
+                })
+              }
+            >
+              Insert inline {type}
+            </button>
+          ))}
+
+          <div style={{ borderTop: "1px solid #e2e8f0", margin: "6px 0" }} />
+
           <button
             style={{ display: "block", width: "100%", textAlign: "left", padding: 8, color: "#b91c1c" }}
             onClick={() => {

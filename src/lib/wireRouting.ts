@@ -16,13 +16,27 @@ export function manhattanPath(start: Point, end: Point): Point[] {
   ];
 }
 
-export function buildRenderedPoints(start: Point, waypoints: Point[], end: Point): Point[] {
+export function buildRenderedPoints(start: Point, waypoints: Point[], end: Point, isLocked?: boolean): Point[] {
+  if (isLocked) {
+    const locked = [start, ...(waypoints || []), end];
+    return dedupePoints(locked);
+  }
+
   const effective =
     waypoints && waypoints.length
       ? [start, ...waypoints, end]
       : manhattanPath(start, end);
 
   return simplifyOrthogonalPath(effective);
+}
+
+function dedupePoints(points: Point[]): Point[] {
+  const out: Point[] = [];
+  for (const p of points) {
+    const last = out[out.length - 1];
+    if (!last || last.x !== p.x || last.y !== p.y) out.push(p);
+  }
+  return out;
 }
 
 export function simplifyOrthogonalPath(points: Point[]): Point[] {
@@ -42,15 +56,14 @@ export function simplifyOrthogonalPath(points: Point[]): Point[] {
   }
   out.push(points[points.length - 1]);
 
-  const dedup: Point[] = [];
-  for (const p of out) {
-    const last = dedup[dedup.length - 1];
-    if (!last || last.x !== p.x || last.y !== p.y) dedup.push(p);
-  }
-  return dedup;
+  return dedupePoints(out);
 }
 
-export function ensureOrthogonalWaypoints(start: Point, waypoints: Point[], end: Point): Point[] {
+export function ensureOrthogonalWaypoints(start: Point, waypoints: Point[], end: Point, isLocked?: boolean): Point[] {
+  if (isLocked) {
+    return dedupePoints([start, ...(waypoints || []), end]).slice(1, -1);
+  }
+
   const pts = [start, ...(waypoints || []), end];
   const out: Point[] = [pts[0]];
 
@@ -111,8 +124,14 @@ function clampToSegment(click: Point, a: Point, b: Point): Point {
   return click;
 }
 
-export function insertWaypointOnSegment(start: Point, waypoints: Point[], end: Point, click: Point): Point[] {
-  const rendered = buildRenderedPoints(start, waypoints || [], end);
+export function insertWaypointOnSegment(
+  start: Point,
+  waypoints: Point[],
+  end: Point,
+  click: Point,
+  isLocked?: boolean
+): Point[] {
+  const rendered = buildRenderedPoints(start, waypoints || [], end, isLocked);
   const segIdx = nearestSegmentIndex(rendered, click);
   const a = rendered[segIdx];
   const b = rendered[segIdx + 1];
@@ -121,14 +140,16 @@ export function insertWaypointOnSegment(start: Point, waypoints: Point[], end: P
   const internal = rendered.slice(1, -1);
   const safeIdx = Math.max(0, Math.min(internal.length, segIdx));
 
-  // Create a visible orthogonal jog instead of an invisible split.
+  if (isLocked) {
+    internal.splice(safeIdx, 0, anchor);
+    return dedupePoints([start, ...internal, end]).slice(1, -1);
+  }
+
   if (a.x === b.x) {
-    // vertical segment -> jog horizontally
     const jogA = { x: anchor.x + DEFAULT_JOG, y: anchor.y - DEFAULT_JOG / 2 };
     const jogB = { x: anchor.x + DEFAULT_JOG, y: anchor.y + DEFAULT_JOG / 2 };
     internal.splice(safeIdx, 0, jogA, jogB);
   } else if (a.y === b.y) {
-    // horizontal segment -> jog vertically
     const jogA = { x: anchor.x - DEFAULT_JOG / 2, y: anchor.y + DEFAULT_JOG };
     const jogB = { x: anchor.x + DEFAULT_JOG / 2, y: anchor.y + DEFAULT_JOG };
     internal.splice(safeIdx, 0, jogA, jogB);
@@ -136,18 +157,32 @@ export function insertWaypointOnSegment(start: Point, waypoints: Point[], end: P
     internal.splice(safeIdx, 0, anchor);
   }
 
-  return ensureOrthogonalWaypoints(start, internal, end);
+  return ensureOrthogonalWaypoints(start, internal, end, false);
 }
 
-export function moveWaypoint(start: Point, waypoints: Point[], end: Point, waypointIndex: number, point: Point): Point[] {
+export function moveWaypoint(
+  start: Point,
+  waypoints: Point[],
+  end: Point,
+  waypointIndex: number,
+  point: Point,
+  isLocked?: boolean
+): Point[] {
   const next = [...(waypoints || [])];
   if (waypointIndex < 0 || waypointIndex >= next.length) return next;
   next[waypointIndex] = point;
-  return ensureOrthogonalWaypoints(start, next, end);
+  return ensureOrthogonalWaypoints(start, next, end, isLocked);
 }
 
-export function moveSegment(start: Point, waypoints: Point[], end: Point, segmentIndex: number, delta: Point): Point[] {
-  const pts = buildRenderedPoints(start, waypoints || [], end);
+export function moveSegment(
+  start: Point,
+  waypoints: Point[],
+  end: Point,
+  segmentIndex: number,
+  delta: Point,
+  isLocked?: boolean
+): Point[] {
+  const pts = buildRenderedPoints(start, waypoints || [], end, isLocked);
   if (segmentIndex < 0 || segmentIndex >= pts.length - 1) return waypoints || [];
 
   const next = [...pts];
@@ -164,7 +199,7 @@ export function moveSegment(start: Point, waypoints: Point[], end: Point, segmen
     next[segmentIndex + 1] = { ...next[segmentIndex + 1], y: next[segmentIndex + 1].y + delta.y };
   }
 
-  return ensureOrthogonalWaypoints(next[0], next.slice(1, -1), next[next.length - 1]);
+  return ensureOrthogonalWaypoints(next[0], next.slice(1, -1), next[next.length - 1], isLocked);
 }
 
 export function segmentMidpoint(a: Point, b: Point): Point {
