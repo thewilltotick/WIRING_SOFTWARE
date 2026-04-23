@@ -41,8 +41,14 @@ import {
   moveSegment
 } from "../lib/wireRouting";
 import { generateHexId } from "../lib/id";
-
-const MODEL_VERSION = 1;
+import {
+  CURRENT_MODEL_VERSION,
+  createEmptyModelShell,
+  makeFreshMetadata,
+  assertImportShape,
+  getImportVersion,
+  canImportVersion
+} from "../lib/modelSchema";
 
 function sanitizeLabelPart(value: any, fallback: string) {
   const s = String(value ?? "").trim();
@@ -73,22 +79,39 @@ function buildDefaultWireLabelFromModel(model: any, fromTerminalId: string | nul
 function withModelMetadata(model: any) {
   return {
     ...model,
-    model_version: MODEL_VERSION,
-    metadata: {
-      created_at: model.metadata?.created_at || new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-      title: model.metadata?.title || "Untitled Wiring Model"
-    }
+    model_version: CURRENT_MODEL_VERSION,
+    metadata: makeFreshMetadata(model.metadata)
   };
+}
+
+/**
+ * Compatibility lock rules:
+ * - model_version is additive and must never be removed
+ * - component.hex_id and wire.hex_id are immutable internal identities
+ * - display ids (component.id / wire.id) are editable and not used as stable keys
+ * - new schema fields should be additive only
+ * - future migrations should be handled in migrateImportedModel(), not ad hoc elsewhere
+ */
+function migrateImportedModel(candidate: any) {
+  const version = getImportVersion(candidate);
+
+  if (!canImportVersion(version)) {
+    throw new Error(`Unsupported model_version ${version}.`);
+  }
+
+  // Version 1 is the locked baseline.
+  return candidate;
 }
 
 function normalizeModel(candidate: any) {
   if (!candidate || typeof candidate !== "object") return withModelMetadata(DEFAULT_MODEL);
 
+  const migrated = migrateImportedModel(candidate);
+
   const componentSeen = new Set<string>();
   const wireSeen = new Set<string>();
 
-  const normalizedComponents = (Array.isArray(candidate.components) ? candidate.components : []).map((c: any, idx: number) => {
+  const normalizedComponents = (Array.isArray(migrated.components) ? migrated.components : []).map((c: any, idx: number) => {
     let hex_id = String(c.hex_id || "");
     if (!hex_id || componentSeen.has(hex_id)) {
       do {
@@ -107,18 +130,14 @@ function normalizeModel(candidate: any) {
   });
 
   const normalizedBase = {
-    model_version: candidate.model_version ?? MODEL_VERSION,
-    metadata: {
-      created_at: candidate.metadata?.created_at || new Date().toISOString(),
-      updated_at: candidate.metadata?.updated_at || new Date().toISOString(),
-      title: candidate.metadata?.title || "Untitled Wiring Model"
-    },
-    nets: Array.isArray(candidate.nets) ? candidate.nets : [],
+    model_version: migrated.model_version ?? CURRENT_MODEL_VERSION,
+    metadata: makeFreshMetadata(migrated.metadata),
+    nets: Array.isArray(migrated.nets) ? migrated.nets : [],
     components: normalizedComponents,
     wires: [] as any[],
   };
 
-  const normalizedWires = (Array.isArray(candidate.wires) ? candidate.wires : []).map((w: any, idx: number) => {
+  const normalizedWires = (Array.isArray(migrated.wires) ? migrated.wires : []).map((w: any, idx: number) => {
     let hex_id = String(w.hex_id || "");
     if (!hex_id || wireSeen.has(hex_id)) {
       do {
@@ -279,6 +298,18 @@ export function useProjectEditor() {
     setSelectedTraceLoadId(null);
     setViewMode("normal");
     setWireContextMenu(null);
+  }
+
+  function updateModelTitle(title: string) {
+    setModel((prev) =>
+      withModelMetadata({
+        ...prev,
+        metadata: {
+          ...prev.metadata,
+          title
+        }
+      })
+    );
   }
 
   function handleTerminalClick(terminalId: string) {
@@ -599,6 +630,7 @@ export function useProjectEditor() {
   function importModelFromText() {
     try {
       const parsed = JSON.parse(importText);
+      assertImportShape(parsed);
       const normalized = normalizeModel(parsed);
       setHistory((h) => pushHistory(h, model));
       setModel(normalized);
@@ -622,6 +654,7 @@ export function useProjectEditor() {
     try {
       const text = await file.text();
       const parsed = JSON.parse(text);
+      assertImportShape(parsed);
       const normalized = normalizeModel(parsed);
       setHistory((h) => pushHistory(h, model));
       setModel(normalized);
@@ -727,6 +760,7 @@ export function useProjectEditor() {
     setEnableNetSelection,
     setWireLabelMode,
     clearSelection,
+    updateModelTitle,
     handleTerminalClick,
     onSelectWire,
     onSelectNet,

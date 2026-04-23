@@ -12,7 +12,24 @@ export default function App() {
   return (
     <div style={{ padding: 16, fontFamily: "Arial, sans-serif" }}>
       <h1>Trailer Wiring Studio</h1>
-      <p>Components, terminals, nets, wires, and explicit return paths.</p>
+      <p>Components, terminals, nets, wires, explicit return paths, and solver-ready component definitions.</p>
+
+      <div style={{ border: "1px solid #ddd", borderRadius: 8, background: "#fff", padding: 12, marginBottom: 12 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 220px", gap: 12, alignItems: "end" }}>
+          <div>
+            <div style={{ fontWeight: "bold", marginBottom: 6 }}>Model Title</div>
+            <input
+              value={editor.model.metadata?.title || ""}
+              onChange={(e) => editor.updateModelTitle(e.target.value)}
+              style={{ width: "100%" }}
+            />
+          </div>
+          <div style={{ fontSize: 12, color: "#475569" }}>
+            <div>Schema version: {editor.model.model_version}</div>
+            <div>Updated: {editor.model.metadata?.updated_at || "n/a"}</div>
+          </div>
+        </div>
+      </div>
 
       <div style={{ display: "flex", gap: 12, marginBottom: 12, flexWrap: "wrap", alignItems: "center" }}>
         <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
