@@ -169,6 +169,8 @@ export function useProjectEditor() {
   const [wireStartTerminalId, setWireStartTerminalId] = useState<string | null>(null);
   const [selectedComponentHexId, setSelectedComponentHexId] = useState<string | null>(model.components[0]?.hex_id ?? null);
   const [selectedWireHexId, setSelectedWireHexId] = useState<string | null>(model.wires[0]?.hex_id ?? null);
+  const [hoveredComponentHexId, setHoveredComponentHexId] = useState<string | null>(null);
+  const [hoveredWireHexId, setHoveredWireHexId] = useState<string | null>(null);
   const [selectedNetId, setSelectedNetId] = useState<string | null>(null);
   const [selectedTraceLoadId, setSelectedTraceLoadId] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<"normal" | "net" | "trace">("normal");
@@ -684,6 +686,8 @@ export function useProjectEditor() {
     wireStartTerminalId,
     selectedComponentHexId,
     selectedWireHexId,
+    hoveredComponentHexId,
+    hoveredWireHexId,
     selectedNetId,
     selectedTraceLoadId,
     selectedTraceSummary,
@@ -710,6 +714,8 @@ export function useProjectEditor() {
     setNewComponentType,
     setSelectedComponentHexId,
     setSelectedWireHexId,
+    setHoveredComponentHexId,
+    setHoveredWireHexId,
     setSelectedNetId,
     setDraggingComponentHexId,
     setDraggingWireWaypoint,

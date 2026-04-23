@@ -13,6 +13,12 @@ function polarityFromRole(role: any) {
   return "other";
 }
 
+function warnIfMissingNumber(warnings: string[], component: any, field: string, label?: string) {
+  if (!isFiniteNumber(component[field])) {
+    warnings.push(`${component.id || component.hex_id} is missing valid ${label || field}.`);
+  }
+}
+
 export function validateModel(model: any, terminalMap: Record<string, any>, firstPassSolution?: any) {
   const warnings: string[] = [];
 
@@ -51,6 +57,66 @@ export function validateModel(model: any, terminalMap: Record<string, any>, firs
       warnings.push(`Component ${component.id || component.hex_id} has invalid size.`);
     }
 
+    if ((component.enabled ?? true) && !component.electrical_model) {
+      warnings.push(`Component ${component.id || component.hex_id} is missing electrical_model.`);
+    }
+
+    if (component.type === "battery") {
+      warnIfMissingNumber(warnings, component, "nominal_voltage_v");
+      warnIfMissingNumber(warnings, component, "internal_resistance_ohm");
+    }
+
+    if (component.type === "solar_panel") {
+      warnIfMissingNumber(warnings, component, "voc_v");
+      warnIfMissingNumber(warnings, component, "isc_a");
+    }
+
+    if (component.type === "converter") {
+      warnIfMissingNumber(warnings, component, "input_nominal_voltage_v");
+      warnIfMissingNumber(warnings, component, "output_nominal_voltage_v");
+      warnIfMissingNumber(warnings, component, "efficiency_percent");
+      if (!component.converter_topology) warnings.push(`${component.id || component.hex_id} is missing converter_topology.`);
+      if (!component.regulation_mode) warnings.push(`${component.id || component.hex_id} is missing regulation_mode.`);
+    }
+
+    if (component.type === "charger") {
+      warnIfMissingNumber(warnings, component, "output_nominal_voltage_v");
+      warnIfMissingNumber(warnings, component, "max_output_current_a");
+    }
+
+    if (component.type === "inverter") {
+      warnIfMissingNumber(warnings, component, "input_nominal_voltage_v");
+      warnIfMissingNumber(warnings, component, "output_nominal_voltage_v");
+      warnIfMissingNumber(warnings, component, "continuous_power_w");
+    }
+
+    if (component.type === "load") {
+      if (!component.load_model) warnings.push(`${component.id || component.hex_id} is missing load_model.`);
+      warnIfMissingNumber(warnings, component, "nominal_voltage_v");
+
+      if (component.load_model === "constant_current") {
+        warnIfMissingNumber(warnings, component, "load_current_a");
+      }
+      if (component.load_model === "constant_power") {
+        warnIfMissingNumber(warnings, component, "load_power_w");
+      }
+      if (component.load_model === "constant_resistance") {
+        warnIfMissingNumber(warnings, component, "load_resistance_ohm");
+      }
+    }
+
+    if (component.type === "shunt") {
+      warnIfMissingNumber(warnings, component, "tie_resistance_ohm");
+    }
+
+    if (component.type === "resistor") {
+      warnIfMissingNumber(warnings, component, "resistor_ohm");
+    }
+
+    if (component.type === "diode") {
+      warnIfMissingNumber(warnings, component, "forward_voltage_v");
+    }
+
     for (const terminal of component.terminals || []) {
       if (!terminal.id) {
         warnings.push(`A terminal on ${component.id || component.hex_id} is missing terminal ID.`);
@@ -69,6 +135,10 @@ export function validateModel(model: any, terminalMap: Record<string, any>, firs
 
       if (!terminal.net_id) {
         warnings.push(`Terminal ${terminal.id} has no net_id.`);
+      }
+
+      if (!terminal.role) {
+        warnings.push(`Terminal ${terminal.id} has no role.`);
       }
     }
   }
