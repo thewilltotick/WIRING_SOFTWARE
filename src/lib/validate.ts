@@ -1,157 +1,163 @@
-import { wireAmpacityA } from "./electrical";
+function isFiniteNumber(value: any) {
+  return Number.isFinite(Number(value));
+}
 
-const DEFAULT_STEADY_DROP_WARN_V = 0.5;
-const DEFAULT_PEAK_DROP_WARN_V = 1.0;
+function norm(s: any) {
+  return String(s ?? "").trim().toLowerCase();
+}
+
+function polarityFromRole(role: any) {
+  const r = norm(role);
+  if (r.includes("pos")) return "pos";
+  if (r.includes("neg")) return "neg";
+  return "other";
+}
 
 export function validateModel(model: any, terminalMap: Record<string, any>, firstPassSolution?: any) {
   const warnings: string[] = [];
 
-  for (const wire of model.wires || []) {
-    const from = terminalMap[wire.from_terminal];
-    const to = terminalMap[wire.to_terminal];
+  const componentHexIds = new Set<string>();
+  const componentDisplayIds = new Set<string>();
+  const wireHexIds = new Set<string>();
+  const wireDisplayIds = new Set<string>();
+  const terminalIds = new Set<string>();
 
-    if (!from || !to) {
-      warnings.push(`${wire.id}: missing terminal endpoint`);
-      continue;
+  for (const component of model.components || []) {
+    if (!component.hex_id) {
+      warnings.push(`Component "${component.label || component.id || "unknown"}" is missing hex_id.`);
+    } else if (componentHexIds.has(component.hex_id)) {
+      warnings.push(`Duplicate component hex_id: ${component.hex_id}.`);
+    } else {
+      componentHexIds.add(component.hex_id);
     }
 
-    const fromRole = String(from.role || "");
-    const toRole = String(to.role || "");
+    if (!component.id) {
+      warnings.push(`Component "${component.label || component.hex_id || "unknown"}" is missing display ID.`);
+    } else if (componentDisplayIds.has(component.id)) {
+      warnings.push(`Duplicate component display ID: ${component.id}.`);
+    } else {
+      componentDisplayIds.add(component.id);
+    }
 
-    const fromPos = fromRole.includes("pos");
-    const toPos = toRole.includes("pos");
-    const fromNeg = fromRole.includes("neg");
-    const toNeg = toRole.includes("neg");
+    if (!component.label) {
+      warnings.push(`Component ${component.id || component.hex_id} has a blank label.`);
+    }
 
-    const passiveLike =
-      fromRole === "passive" ||
-      toRole === "passive" ||
-      fromRole.startsWith("sense") ||
-      toRole.startsWith("sense") ||
-      fromRole.startsWith("coil") ||
-      toRole.startsWith("coil");
+    if (!isFiniteNumber(component.x) || !isFiniteNumber(component.y)) {
+      warnings.push(`Component ${component.id || component.hex_id} has invalid position.`);
+    }
 
-    if (!passiveLike) {
-      const polarityMismatch =
-        (fromPos && !toPos) ||
-        (toPos && !fromPos) ||
-        (fromNeg && !toNeg) ||
-        (toNeg && !fromNeg);
+    if (!isFiniteNumber(component.width) || Number(component.width) <= 0 || !isFiniteNumber(component.height) || Number(component.height) <= 0) {
+      warnings.push(`Component ${component.id || component.hex_id} has invalid size.`);
+    }
 
-      if (polarityMismatch) {
-        warnings.push(`${wire.id}: terminal polarity mismatch`);
+    for (const terminal of component.terminals || []) {
+      if (!terminal.id) {
+        warnings.push(`A terminal on ${component.id || component.hex_id} is missing terminal ID.`);
+        continue;
       }
 
-      if (from.net_id !== to.net_id) {
-        warnings.push(`${wire.id}: net mismatch (${from.net_id} vs ${to.net_id})`);
+      if (terminalIds.has(terminal.id)) {
+        warnings.push(`Duplicate terminal ID: ${terminal.id}.`);
+      } else {
+        terminalIds.add(terminal.id);
       }
-    }
 
-    if (Number(wire.length_ft || 0) < 0) {
-      warnings.push(`${wire.id}: negative wire length`);
-    }
-
-    if (!wire.material || wire.material !== "copper") {
-      if (wire.material && wire.material !== "copper") {
-        warnings.push(`${wire.id}: unsupported material '${wire.material}', copper assumed`);
+      if (!terminal.label) {
+        warnings.push(`Terminal ${terminal.id} has a blank label.`);
       }
-    }
 
-    const ampacity = wireAmpacityA(wire.awg);
-    if (ampacity == null) {
-      warnings.push(`${wire.id}: unknown AWG '${wire.awg}'`);
-    }
-
-    const steadyCurrent = firstPassSolution?.steady_wire_current_map?.[wire.id];
-    const peakCurrent = firstPassSolution?.peak_wire_current_map?.[wire.id];
-    const steadyDrop = firstPassSolution?.steady_wire_voltage_drop_map?.[wire.id];
-    const peakDrop = firstPassSolution?.peak_wire_voltage_drop_map?.[wire.id];
-
-    if (typeof ampacity === "number" && typeof steadyCurrent === "number" && steadyCurrent > ampacity) {
-      warnings.push(`${wire.id}: steady current ${steadyCurrent.toFixed(2)} A exceeds ampacity ${ampacity} A`);
-    }
-
-    if (typeof ampacity === "number" && typeof peakCurrent === "number" && peakCurrent > ampacity) {
-      warnings.push(`${wire.id}: peak current ${peakCurrent.toFixed(2)} A exceeds ampacity ${ampacity} A`);
-    }
-
-    if (typeof steadyDrop === "number" && steadyDrop > DEFAULT_STEADY_DROP_WARN_V) {
-      warnings.push(`${wire.id}: steady voltage drop ${steadyDrop.toFixed(3)} V exceeds ${DEFAULT_STEADY_DROP_WARN_V} V`);
-    }
-
-    if (typeof peakDrop === "number" && peakDrop > DEFAULT_PEAK_DROP_WARN_V) {
-      warnings.push(`${wire.id}: peak voltage drop ${peakDrop.toFixed(3)} V exceeds ${DEFAULT_PEAK_DROP_WARN_V} V`);
+      if (!terminal.net_id) {
+        warnings.push(`Terminal ${terminal.id} has no net_id.`);
+      }
     }
   }
 
-  const loadSummariesById = Object.fromEntries(
-    ((firstPassSolution?.load_path_summaries || []) as any[]).map((s: any) => [s.component_id, s])
-  );
-
-  for (const component of model.components || []) {
-    for (const terminal of component.terminals || []) {
-      if (!terminal.net_id) warnings.push(`${terminal.id}: missing net_id`);
-      if (!terminal.side) warnings.push(`${terminal.id}: missing side`);
+  for (const wire of model.wires || []) {
+    if (!wire.hex_id) {
+      warnings.push(`Wire ${wire.id || "(no display ID)"} is missing hex_id.`);
+    } else if (wireHexIds.has(wire.hex_id)) {
+      warnings.push(`Duplicate wire hex_id: ${wire.hex_id}.`);
+    } else {
+      wireHexIds.add(wire.hex_id);
     }
 
-    if (String(component.type || "") === "load") {
-      const steadyCurrent = Number(component.load_current_a ?? 0);
-      const steadyPower = Number(component.load_power_w ?? 0);
-      const peakCurrent = Number(component.peak_load_current_a ?? 0);
-      const peakPower = Number(component.peak_load_power_w ?? 0);
-      const peakDuration = Number(component.peak_duration_ms ?? 0);
-      const dutyCycle = Number(component.duty_cycle_percent ?? 0);
-      const minOperatingVoltage = Number(component.min_operating_voltage_v ?? 0);
-      const solved = loadSummariesById[component.id];
+    if (!wire.id) {
+      warnings.push(`Wire ${wire.hex_id || "(unknown)"} is missing display ID.`);
+    } else if (wireDisplayIds.has(wire.id)) {
+      warnings.push(`Duplicate wire display ID: ${wire.id}.`);
+    } else {
+      wireDisplayIds.add(wire.id);
+    }
 
-      if (steadyCurrent > 0 && steadyPower > 0) {
-        warnings.push(`${component.id}: both steady current and steady power are set; current takes precedence`);
+    if (!wire.label || !String(wire.label).trim()) {
+      warnings.push(`Wire ${wire.id || wire.hex_id} has a blank label.`);
+    }
+
+    if (!wire.from_terminal && !wire.from_terminal_parked) {
+      warnings.push(`Wire ${wire.id || wire.hex_id} has no source endpoint.`);
+    }
+
+    if (!wire.to_terminal && !wire.to_terminal_parked) {
+      warnings.push(`Wire ${wire.id || wire.hex_id} has no destination endpoint.`);
+    }
+
+    if (wire.from_terminal && !terminalMap[wire.from_terminal]) {
+      warnings.push(`Wire ${wire.id || wire.hex_id} references missing from_terminal ${wire.from_terminal}.`);
+    }
+
+    if (wire.to_terminal && !terminalMap[wire.to_terminal]) {
+      warnings.push(`Wire ${wire.id || wire.hex_id} references missing to_terminal ${wire.to_terminal}.`);
+    }
+
+    if (!isFiniteNumber(wire.length_ft) || Number(wire.length_ft) < 0) {
+      warnings.push(`Wire ${wire.id || wire.hex_id} has invalid length_ft.`);
+    }
+
+    if (wire.from_terminal && wire.to_terminal && wire.from_terminal === wire.to_terminal) {
+      warnings.push(`Wire ${wire.id || wire.hex_id} connects a terminal to itself.`);
+    }
+
+    const fromTerm = wire.from_terminal ? terminalMap[wire.from_terminal] : null;
+    const toTerm = wire.to_terminal ? terminalMap[wire.to_terminal] : null;
+
+    if (fromTerm && toTerm) {
+      const fromPol = polarityFromRole(fromTerm.role);
+      const toPol = polarityFromRole(toTerm.role);
+
+      if (fromPol === "pos" && toPol === "neg") {
+        warnings.push(`Wire ${wire.id || wire.hex_id} directly connects positive-role to negative-role terminal.`);
       }
-
-      if (peakCurrent > 0 && peakPower > 0) {
-        warnings.push(`${component.id}: both peak current and peak power are set; current takes precedence`);
+      if (fromPol === "neg" && toPol === "pos") {
+        warnings.push(`Wire ${wire.id || wire.hex_id} directly connects negative-role to positive-role terminal.`);
       }
+    }
 
-      if (peakCurrent > 0 && steadyCurrent > 0 && peakCurrent < steadyCurrent) {
-        warnings.push(`${component.id}: peak current is lower than steady current`);
-      }
+    if ((wire.from_terminal === null && wire.from_terminal_parked) && !wire.from_parked_point) {
+      warnings.push(`Wire ${wire.id || wire.hex_id} has a parked source without a parked point.`);
+    }
 
-      if (peakPower > 0 && steadyPower > 0 && peakPower < steadyPower) {
-        warnings.push(`${component.id}: peak power is lower than steady power`);
-      }
+    if ((wire.to_terminal === null && wire.to_terminal_parked) && !wire.to_parked_point) {
+      warnings.push(`Wire ${wire.id || wire.hex_id} has a parked destination without a parked point.`);
+    }
+  }
 
-      if (peakDuration < 0) {
-        warnings.push(`${component.id}: negative peak duration`);
-      }
+  if (!model.model_version) {
+    warnings.push(`Model is missing model_version.`);
+  }
 
-      if (dutyCycle < 0 || dutyCycle > 100) {
-        warnings.push(`${component.id}: duty cycle must be between 0 and 100 percent`);
-      }
+  if (!model.metadata?.created_at) {
+    warnings.push(`Model metadata is missing created_at.`);
+  }
 
-      if (solved) {
-        if (solved.positive_path_found !== true || solved.negative_path_found !== true) {
-          warnings.push(`${component.id}: no complete source/load path found`);
-        }
+  if (!model.metadata?.updated_at) {
+    warnings.push(`Model metadata is missing updated_at.`);
+  }
 
-        if (
-          minOperatingVoltage > 0 &&
-          typeof solved.estimated_steady_load_voltage_v === "number" &&
-          solved.estimated_steady_load_voltage_v < minOperatingVoltage
-        ) {
-          warnings.push(
-            `${component.id}: steady load voltage ${solved.estimated_steady_load_voltage_v.toFixed(2)} V below minimum ${minOperatingVoltage.toFixed(2)} V`
-          );
-        }
-
-        if (
-          minOperatingVoltage > 0 &&
-          typeof solved.estimated_peak_load_voltage_v === "number" &&
-          solved.estimated_peak_load_voltage_v < minOperatingVoltage
-        ) {
-          warnings.push(
-            `${component.id}: peak load voltage ${solved.estimated_peak_load_voltage_v.toFixed(2)} V below minimum ${minOperatingVoltage.toFixed(2)} V`
-          );
-        }
+  if (firstPassSolution?.load_path_summaries) {
+    for (const summary of firstPassSolution.load_path_summaries) {
+      if (!summary.all_path_wire_hex_ids || !summary.all_path_wire_hex_ids.length) {
+        warnings.push(`No source path found for load ${summary.component_label || summary.component_id || summary.component_hex_id}.`);
       }
     }
   }

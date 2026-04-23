@@ -46,6 +46,38 @@ function nextComponentIndex(model: any, type: string) {
   return max + 1;
 }
 
+function buildComponentLookup(model: any) {
+  const byTerminalId: Record<string, { component: any; terminal: any }> = {};
+
+  for (const component of model.components || []) {
+    for (const terminal of component.terminals || []) {
+      byTerminalId[terminal.id] = { component, terminal };
+    }
+  }
+
+  return byTerminalId;
+}
+
+function sanitizeLabelPart(value: any, fallback: string) {
+  const s = String(value ?? "").trim();
+  if (!s) return fallback;
+  return s.replace(/\s+/g, "_");
+}
+
+function buildDefaultWireLabel(model: any, fromTerminalId: string | null, toTerminalId: string | null) {
+  const lookup = buildComponentLookup(model);
+
+  const fromRef = fromTerminalId ? lookup[fromTerminalId] : null;
+  const toRef = toTerminalId ? lookup[toTerminalId] : null;
+
+  const fromComponentLabel = sanitizeLabelPart(fromRef?.component?.label || fromRef?.component?.id, "from_component");
+  const fromTerminalLabel = sanitizeLabelPart(fromRef?.terminal?.label, "from_terminal");
+  const toComponentLabel = sanitizeLabelPart(toRef?.component?.label || toRef?.component?.id, "to_component");
+  const toTerminalLabel = sanitizeLabelPart(toRef?.terminal?.label, "to_terminal");
+
+  return `${fromComponentLabel}_${fromTerminalLabel} -> ${toComponentLabel}_${toTerminalLabel}`;
+}
+
 export function addWire(model: any, terminalMap: Record<string, any>, fromId: string, toId: string) {
   const fromTerminal = terminalMap[fromId];
   const toTerminal = terminalMap[toId];
@@ -56,11 +88,13 @@ export function addWire(model: any, terminalMap: Record<string, any>, fromId: st
   const newWire = {
     hex_id: generateHexId("w"),
     id: nextWireDisplayId(model),
-    label: "",
+    label: buildDefaultWireLabel(model, fromId, toId),
     from_terminal: fromId,
     to_terminal: toId,
     from_terminal_parked: null,
     to_terminal_parked: null,
+    from_parked_point: null,
+    to_parked_point: null,
     route_locked: false,
     polarity,
     awg: "12",
@@ -204,12 +238,16 @@ export function insertInlineComponentOnWire(
     wires: model.wires.filter((w: any) => w.hex_id !== wireHexId)
   };
 
+  const futureModel = { ...modelWithoutOriginal, components: [...modelWithoutOriginal.components, component] };
+
   const leftWire = {
     ...wire,
     hex_id: generateHexId("w"),
     id: nextWireDisplayId(modelWithoutOriginal),
+    label: buildDefaultWireLabel(futureModel, wire.from_terminal, inlineTerms.in.id),
     to_terminal: inlineTerms.in.id,
     to_terminal_parked: null,
+    to_parked_point: null,
     waypoints: []
   };
 
@@ -222,8 +260,10 @@ export function insertInlineComponentOnWire(
     ...wire,
     hex_id: generateHexId("w"),
     id: nextWireDisplayId(modelAfterLeft),
+    label: buildDefaultWireLabel(futureModel, inlineTerms.out.id, wire.to_terminal),
     from_terminal: inlineTerms.out.id,
     from_terminal_parked: null,
+    from_parked_point: null,
     waypoints: []
   };
 
@@ -280,6 +320,9 @@ export function addTerminal(model: any, componentHexId: string) {
 }
 
 export function deleteTerminal(model: any, terminalId: string) {
+  const lookup = buildComponentLookup(model);
+  const parkedRef = lookup[terminalId];
+
   return {
     ...model,
     components: model.components.map((c: any) => ({
@@ -291,14 +334,16 @@ export function deleteTerminal(model: any, terminalId: string) {
         return {
           ...w,
           from_terminal: null,
-          from_terminal_parked: w.from_terminal
+          from_terminal_parked: w.from_terminal,
+          from_parked_point: parkedRef ? { x: parkedRef.component.x, y: parkedRef.component.y } : w.from_parked_point ?? null
         };
       }
       if (w.to_terminal === terminalId) {
         return {
           ...w,
           to_terminal: null,
-          to_terminal_parked: w.to_terminal
+          to_terminal_parked: w.to_terminal,
+          to_parked_point: parkedRef ? { x: parkedRef.component.x, y: parkedRef.component.y } : w.to_parked_point ?? null
         };
       }
       return w;
@@ -327,10 +372,12 @@ export function deleteComponent(model: any, componentHexId: string) {
       if (terminalIds.has(w.from_terminal)) {
         next.from_terminal_parked = w.from_terminal;
         next.from_terminal = null;
+        next.from_parked_point = { x: component.x, y: component.y };
       }
       if (terminalIds.has(w.to_terminal)) {
         next.to_terminal_parked = w.to_terminal;
         next.to_terminal = null;
+        next.to_parked_point = { x: component.x, y: component.y };
       }
       return next;
     })
@@ -344,5 +391,62 @@ export function addComponent(model: any, type: string) {
   return {
     ...model,
     components: [...model.components, component]
+  };
+}
+
+export function updateParkedWireEndPoint(
+  model: any,
+  wireHexId: string,
+  end: "from" | "to",
+  point: { x: number; y: number }
+) {
+  return {
+    ...model,
+    wires: model.wires.map((w: any) => {
+      if (w.hex_id !== wireHexId) return w;
+      return end === "from"
+        ? { ...w, from_parked_point: point }
+        : { ...w, to_parked_point: point };
+    })
+  };
+}
+
+export function reconnectParkedWireEnd(
+  model: any,
+  wireHexId: string,
+  end: "from" | "to",
+  terminalId: string
+) {
+  return {
+    ...model,
+    wires: model.wires.map((w: any) => {
+      if (w.hex_id !== wireHexId) return w;
+
+      if (end === "from") {
+        return {
+          ...w,
+          from_terminal: terminalId,
+          from_terminal_parked: null,
+          from_parked_point: null,
+          label: buildDefaultWireLabel(
+            model,
+            terminalId,
+            w.to_terminal
+          )
+        };
+      }
+
+      return {
+        ...w,
+        to_terminal: terminalId,
+        to_terminal_parked: null,
+        to_parked_point: null,
+        label: buildDefaultWireLabel(
+          model,
+          w.from_terminal,
+          terminalId
+        )
+      };
+    })
   };
 }

@@ -5,6 +5,12 @@ const switchHex = generateHexId("c");
 const loadHex = generateHexId("c");
 
 export const DEFAULT_MODEL = {
+  model_version: 1,
+  metadata: {
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+    title: "Untitled Wiring Model"
+  },
   nets: [],
   components: [
     {
@@ -109,11 +115,13 @@ export const DEFAULT_MODEL = {
     {
       hex_id: generateHexId("w"),
       id: "W1",
-      label: "",
+      label: "Battery_+ -> Switch_COM",
       from_terminal: `${batteryHex}_POS`,
       to_terminal: `${switchHex}_COM`,
       from_terminal_parked: null,
       to_terminal_parked: null,
+      from_parked_point: null,
+      to_parked_point: null,
       route_locked: false,
       polarity: "+",
       awg: "12",
@@ -125,11 +133,13 @@ export const DEFAULT_MODEL = {
     {
       hex_id: generateHexId("w"),
       id: "W2",
-      label: "",
+      label: "Switch_NO -> Load_+",
       from_terminal: `${switchHex}_NO`,
       to_terminal: `${loadHex}_POS`,
       from_terminal_parked: null,
       to_terminal_parked: null,
+      from_parked_point: null,
+      to_parked_point: null,
       route_locked: false,
       polarity: "+",
       awg: "12",
@@ -141,11 +151,13 @@ export const DEFAULT_MODEL = {
     {
       hex_id: generateHexId("w"),
       id: "W3",
-      label: "",
+      label: "Battery_- -> Load_-",
       from_terminal: `${batteryHex}_NEG`,
       to_terminal: `${loadHex}_NEG`,
       from_terminal_parked: null,
       to_terminal_parked: null,
+      from_parked_point: null,
+      to_parked_point: null,
       route_locked: false,
       polarity: "-",
       awg: "12",

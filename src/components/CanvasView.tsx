@@ -79,6 +79,7 @@ export function CanvasView({ editor }: any) {
     draggingComponentHexId,
     draggingWireWaypoint,
     draggingWireSegment,
+    draggingParkedEnd,
     wireContextMenu,
     setDraggingComponentHexId,
     setDraggingWireWaypoint,
@@ -95,6 +96,9 @@ export function CanvasView({ editor }: any) {
     onDeleteWireWaypoint,
     onStartDragWireSegment,
     onMoveWireSegment,
+    onStartDragParkedEnd,
+    onMoveParkedEnd,
+    onEndDragParkedEnd,
     onDeleteWire,
     showWireLabels,
     snapToGrid,
@@ -110,7 +114,7 @@ export function CanvasView({ editor }: any) {
       <h2>Canvas</h2>
 
       <div style={{ fontSize: 12, marginBottom: 8, color: "#475569" }}>
-        Double-click a wire to add a visible bend jog. Drag blue circles to move bends. Drag blue squares to move whole sections. Right-click a wire for actions.
+        Double-click a wire to add a visible bend jog. Drag blue circles to move bends. Drag blue squares to move whole sections. Drag orange parked endpoints onto a terminal to reconnect them.
       </div>
 
       <div
@@ -153,6 +157,11 @@ export function CanvasView({ editor }: any) {
 
               if (draggingWireSegment) {
                 onMoveWireSegment(x, y);
+                return;
+              }
+
+              if (draggingParkedEnd) {
+                onMoveParkedEnd(draggingParkedEnd.wireHexId, draggingParkedEnd.end, { x, y });
               }
             }}
             onMouseUp={() => {
@@ -164,6 +173,7 @@ export function CanvasView({ editor }: any) {
               setDraggingComponentHexId(null);
               setDraggingWireWaypoint(null);
               setDraggingWireSegment(null);
+              onEndDragParkedEnd();
             }}
           >
             {Array.from({ length: Math.floor(canvasWidth / 20) }).map((_, i) => (
@@ -174,7 +184,11 @@ export function CanvasView({ editor }: any) {
             ))}
 
             {model.wires.map((w: any) => {
-              const resolveTerminalPoint = (terminalId: string | null, parkedTerminalId: string | null) => {
+              const resolveTerminalPoint = (
+                terminalId: string | null,
+                parkedTerminalId: string | null,
+                parkedPoint: { x: number; y: number } | null
+              ) => {
                 if (terminalId) {
                   const terminal = terminalMap[terminalId];
                   if (terminal) {
@@ -182,6 +196,7 @@ export function CanvasView({ editor }: any) {
                     if (comp) return getTerminalPosition(comp, terminal);
                   }
                 }
+                if (parkedPoint) return parkedPoint;
                 if (parkedTerminalId) {
                   const parkedComp = model.components.find((c: any) => c.terminals.some((t: any) => t.id === parkedTerminalId));
                   if (parkedComp) return { x: parkedComp.x, y: parkedComp.y };
@@ -189,9 +204,9 @@ export function CanvasView({ editor }: any) {
                 return { x: 100, y: 100 };
               };
 
-              const a = resolveTerminalPoint(w.from_terminal, w.from_terminal_parked);
-              const b = resolveTerminalPoint(w.to_terminal, w.to_terminal_parked);
-              const points = buildRenderedPoints(a, w.waypoints || [], b, !!w.route_locked);
+              const startPoint = resolveTerminalPoint(w.from_terminal, w.from_terminal_parked, w.from_parked_point ?? null);
+              const endPoint = resolveTerminalPoint(w.to_terminal, w.to_terminal_parked, w.to_parked_point ?? null);
+              const points = buildRenderedPoints(startPoint, w.waypoints || [], endPoint, !!w.route_locked);
 
               const fromTerminal = w.from_terminal ? terminalMap[w.from_terminal] : null;
               const toTerminal = w.to_terminal ? terminalMap[w.to_terminal] : null;
@@ -313,6 +328,38 @@ export function CanvasView({ editor }: any) {
                       }}
                     />
                   ))}
+
+                  {w.from_terminal === null && (
+                    <circle
+                      cx={startPoint.x}
+                      cy={startPoint.y}
+                      r="10"
+                      fill="#fff7ed"
+                      stroke="#ea580c"
+                      strokeWidth="3"
+                      style={{ cursor: "grab", pointerEvents: "all" }}
+                      onMouseDown={(e) => {
+                        e.stopPropagation();
+                        onStartDragParkedEnd(w.hex_id, "from");
+                      }}
+                    />
+                  )}
+
+                  {w.to_terminal === null && (
+                    <circle
+                      cx={endPoint.x}
+                      cy={endPoint.y}
+                      r="10"
+                      fill="#fff7ed"
+                      stroke="#ea580c"
+                      strokeWidth="3"
+                      style={{ cursor: "grab", pointerEvents: "all" }}
+                      onMouseDown={(e) => {
+                        e.stopPropagation();
+                        onStartDragParkedEnd(w.hex_id, "to");
+                      }}
+                    />
+                  )}
                 </g>
               );
             })}
@@ -385,19 +432,27 @@ export function CanvasView({ editor }: any) {
                     return (
                       <g
                         key={t.id}
+                        onMouseDown={(e) => {
+                          e.stopPropagation();
+                          if (draggingParkedEnd) {
+                            handleTerminalClick(t.id);
+                            return;
+                          }
+                          if (enableNetSelection) onSelectNet(t.net_id);
+                        }}
                         onClick={(e) => {
                           e.stopPropagation();
-                          if (enableNetSelection) onSelectNet(t.net_id);
+                          if (draggingParkedEnd) return;
                           handleTerminalClick(t.id);
                         }}
-                        style={{ cursor: "pointer" }}
+                        style={{ cursor: draggingParkedEnd ? "copy" : "pointer" }}
                       >
                         <circle
                           cx={p.x}
                           cy={p.y}
-                          r="7"
+                          r={draggingParkedEnd ? "11" : "7"}
                           fill={terminalNetSelected ? "#2563eb" : String(t.role).includes("pos") ? "#dc2626" : "#334155"}
-                          stroke={active ? "#2563eb" : "white"}
+                          stroke={active ? "#2563eb" : draggingParkedEnd ? "#f59e0b" : "white"}
                           strokeWidth="3"
                           opacity={shouldFade ? 0.35 : 1}
                         />

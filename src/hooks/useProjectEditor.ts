@@ -13,7 +13,9 @@ import {
   addComponent,
   setWireWaypoints,
   deleteWireWaypoint,
-  insertInlineComponentOnWire
+  insertInlineComponentOnWire,
+  updateParkedWireEndPoint,
+  reconnectParkedWireEnd
 } from "../lib/projectActions";
 import { validateModel } from "../lib/validate";
 import { pushHistory, popHistory } from "../lib/history";
@@ -40,8 +42,48 @@ import {
 } from "../lib/wireRouting";
 import { generateHexId } from "../lib/id";
 
+const MODEL_VERSION = 1;
+
+function sanitizeLabelPart(value: any, fallback: string) {
+  const s = String(value ?? "").trim();
+  if (!s) return fallback;
+  return s.replace(/\s+/g, "_");
+}
+
+function buildDefaultWireLabelFromModel(model: any, fromTerminalId: string | null, toTerminalId: string | null) {
+  const lookup: Record<string, { component: any; terminal: any }> = {};
+
+  for (const component of model.components || []) {
+    for (const terminal of component.terminals || []) {
+      lookup[terminal.id] = { component, terminal };
+    }
+  }
+
+  const fromRef = fromTerminalId ? lookup[fromTerminalId] : null;
+  const toRef = toTerminalId ? lookup[toTerminalId] : null;
+
+  const fromComponentLabel = sanitizeLabelPart(fromRef?.component?.label || fromRef?.component?.id, "from_component");
+  const fromTerminalLabel = sanitizeLabelPart(fromRef?.terminal?.label, "from_terminal");
+  const toComponentLabel = sanitizeLabelPart(toRef?.component?.label || toRef?.component?.id, "to_component");
+  const toTerminalLabel = sanitizeLabelPart(toRef?.terminal?.label, "to_terminal");
+
+  return `${fromComponentLabel}_${fromTerminalLabel} -> ${toComponentLabel}_${toTerminalLabel}`;
+}
+
+function withModelMetadata(model: any) {
+  return {
+    ...model,
+    model_version: MODEL_VERSION,
+    metadata: {
+      created_at: model.metadata?.created_at || new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      title: model.metadata?.title || "Untitled Wiring Model"
+    }
+  };
+}
+
 function normalizeModel(candidate: any) {
-  if (!candidate || typeof candidate !== "object") return DEFAULT_MODEL;
+  if (!candidate || typeof candidate !== "object") return withModelMetadata(DEFAULT_MODEL);
 
   const componentSeen = new Set<string>();
   const wireSeen = new Set<string>();
@@ -64,6 +106,18 @@ function normalizeModel(candidate: any) {
     };
   });
 
+  const normalizedBase = {
+    model_version: candidate.model_version ?? MODEL_VERSION,
+    metadata: {
+      created_at: candidate.metadata?.created_at || new Date().toISOString(),
+      updated_at: candidate.metadata?.updated_at || new Date().toISOString(),
+      title: candidate.metadata?.title || "Untitled Wiring Model"
+    },
+    nets: Array.isArray(candidate.nets) ? candidate.nets : [],
+    components: normalizedComponents,
+    wires: [] as any[],
+  };
+
   const normalizedWires = (Array.isArray(candidate.wires) ? candidate.wires : []).map((w: any, idx: number) => {
     let hex_id = String(w.hex_id || "");
     if (!hex_id || wireSeen.has(hex_id)) {
@@ -73,25 +127,32 @@ function normalizeModel(candidate: any) {
     }
     wireSeen.add(hex_id);
 
+    const from_terminal = w.from_terminal ?? null;
+    const to_terminal = w.to_terminal ?? null;
+    const label =
+      String(w.label ?? "").trim() ||
+      buildDefaultWireLabelFromModel(normalizedBase, from_terminal, to_terminal);
+
     return {
       ...w,
       hex_id,
       id: w.id ?? `W${idx + 1}`,
-      label: w.label ?? "",
-      from_terminal: w.from_terminal ?? null,
-      to_terminal: w.to_terminal ?? null,
+      label,
+      from_terminal,
+      to_terminal,
       from_terminal_parked: w.from_terminal_parked ?? null,
       to_terminal_parked: w.to_terminal_parked ?? null,
+      from_parked_point: w.from_parked_point ?? null,
+      to_parked_point: w.to_parked_point ?? null,
       route_locked: !!w.route_locked,
       waypoints: Array.isArray(w.waypoints) ? w.waypoints : []
     };
   });
 
-  return {
-    nets: Array.isArray(candidate.nets) ? candidate.nets : [],
-    components: normalizedComponents,
+  return withModelMetadata({
+    ...normalizedBase,
     wires: normalizedWires,
-  };
+  });
 }
 
 export function useProjectEditor() {
@@ -117,6 +178,7 @@ export function useProjectEditor() {
   const [draggingComponentHexId, setDraggingComponentHexId] = useState<string | null>(null);
   const [draggingWireWaypoint, setDraggingWireWaypoint] = useState<{ wireHexId: string; waypointIndex: number } | null>(null);
   const [draggingWireSegment, setDraggingWireSegment] = useState<{ wireHexId: string; segmentIndex: number; lastX: number; lastY: number } | null>(null);
+  const [draggingParkedEnd, setDraggingParkedEnd] = useState<{ wireHexId: string; end: "from" | "to" } | null>(null);
   const [wireContextMenu, setWireContextMenu] = useState<{
     wireHexId: string;
     x: number;
@@ -159,7 +221,7 @@ export function useProjectEditor() {
 
   const traceWireIdSet = useMemo(() => {
     if (!selectedTraceSummary) return new Set<string>();
-    return new Set((selectedTraceSummary.all_path_wire_ids || []).filter(Boolean));
+    return new Set((selectedTraceSummary.all_path_wire_hex_ids || []).filter(Boolean));
   }, [selectedTraceSummary]);
 
   const warnings = useMemo(() => {
@@ -188,7 +250,7 @@ export function useProjectEditor() {
   function commit(updater: (prev: any) => any) {
     setModel((prev) => {
       setHistory((h) => pushHistory(h, prev));
-      return updater(prev);
+      return withModelMetadata(updater(prev));
     });
   }
 
@@ -202,6 +264,7 @@ export function useProjectEditor() {
         setWireStartTerminalId(null);
         setDraggingWireWaypoint(null);
         setDraggingWireSegment(null);
+        setDraggingParkedEnd(null);
         setWireContextMenu(null);
       }
       return nextHistory;
@@ -218,6 +281,13 @@ export function useProjectEditor() {
 
   function handleTerminalClick(terminalId: string) {
     setWireContextMenu(null);
+
+    if (draggingParkedEnd) {
+      commit((prev) => reconnectParkedWireEnd(prev, draggingParkedEnd.wireHexId, draggingParkedEnd.end, terminalId));
+      setDraggingParkedEnd(null);
+      setSelectedWireHexId(draggingParkedEnd.wireHexId);
+      return;
+    }
 
     if (enableNetSelection) {
       const term = terminalMap[terminalId];
@@ -312,7 +382,11 @@ export function useProjectEditor() {
     const wire = getWireByHexId(wireHexId);
     if (!wire) return null;
 
-    const resolveTerminalPoint = (terminalId: string | null, parkedTerminalId: string | null) => {
+    const resolveTerminalPoint = (
+      terminalId: string | null,
+      parkedTerminalId: string | null,
+      parkedPoint: { x: number; y: number } | null
+    ) => {
       if (terminalId) {
         const terminal = terminalMap[terminalId];
         if (terminal) {
@@ -349,12 +423,13 @@ export function useProjectEditor() {
           }
         }
       }
+      if (parkedPoint) return parkedPoint;
       return parkedPointFromTerminalId(parkedTerminalId);
     };
 
     return {
-      start: resolveTerminalPoint(wire.from_terminal, wire.from_terminal_parked),
-      end: resolveTerminalPoint(wire.to_terminal, wire.to_terminal_parked),
+      start: resolveTerminalPoint(wire.from_terminal, wire.from_terminal_parked, wire.from_parked_point ?? null),
+      end: resolveTerminalPoint(wire.to_terminal, wire.to_terminal_parked, wire.to_parked_point ?? null),
       waypoints: wire.waypoints || [],
       route_locked: !!wire.route_locked
     };
@@ -440,6 +515,20 @@ export function useProjectEditor() {
     setDraggingWireSegment({ wireHexId, segmentIndex, lastX: x, lastY: y });
   }
 
+  function onStartDragParkedEnd(wireHexId: string, end: "from" | "to") {
+    setDraggingParkedEnd({ wireHexId, end });
+    setSelectedWireHexId(wireHexId);
+    setWireContextMenu(null);
+  }
+
+  function onMoveParkedEnd(wireHexId: string, end: "from" | "to", point: { x: number; y: number }) {
+    setModel((prev) => withModelMetadata(updateParkedWireEndPoint(prev, wireHexId, end, point)));
+  }
+
+  function onEndDragParkedEnd() {
+    setDraggingParkedEnd(null);
+  }
+
   function onAddTerminal(componentHexId: string) {
     commit((prev) => addTerminal(prev, componentHexId));
   }
@@ -464,7 +553,7 @@ export function useProjectEditor() {
   }
 
   function moveComponentTo(componentHexId: string, x: number, y: number) {
-    setModel((prev) => ({
+    setModel((prev) => withModelMetadata({
       ...prev,
       components: prev.components.map((c: any) =>
         c.hex_id === componentHexId ? { ...c, x, y } : c
@@ -496,6 +585,7 @@ export function useProjectEditor() {
     setWireStartTerminalId(null);
     setDraggingWireWaypoint(null);
     setDraggingWireSegment(null);
+    setDraggingParkedEnd(null);
     setWireContextMenu(null);
     setImportError(null);
   }
@@ -518,6 +608,7 @@ export function useProjectEditor() {
       setWireStartTerminalId(null);
       setDraggingWireWaypoint(null);
       setDraggingWireSegment(null);
+      setDraggingParkedEnd(null);
       setWireContextMenu(null);
       setImportError(null);
     } catch (err: any) {
@@ -540,6 +631,7 @@ export function useProjectEditor() {
       setWireStartTerminalId(null);
       setDraggingWireWaypoint(null);
       setDraggingWireSegment(null);
+      setDraggingParkedEnd(null);
       setWireContextMenu(null);
       setImportError(null);
       setImportText(text);
@@ -603,6 +695,7 @@ export function useProjectEditor() {
     draggingComponentHexId,
     draggingWireWaypoint,
     draggingWireSegment,
+    draggingParkedEnd,
     wireContextMenu,
     showWireLabels,
     snapToGrid,
@@ -644,6 +737,9 @@ export function useProjectEditor() {
     onDeleteWireWaypoint,
     onStartDragWireSegment,
     onMoveWireSegment,
+    onStartDragParkedEnd,
+    onMoveParkedEnd,
+    onEndDragParkedEnd,
     onAddTerminal,
     onDeleteTerminal,
     onDeleteWire,

@@ -218,10 +218,11 @@ export function InspectorView({ editor }: any) {
         {model.wires.map((w: any) => {
           const resistance = wireResistanceOhm(w.awg, Number(w.length_ft || 0));
           const ampacity = wireAmpacityA(w.awg);
-          const steadyCurrent = firstPassSolution.steady_wire_current_map?.[w.id] ?? null;
-          const peakCurrent = firstPassSolution.peak_wire_current_map?.[w.id] ?? null;
-          const steadyDrop = firstPassSolution.steady_wire_voltage_drop_map?.[w.id] ?? null;
-          const peakDrop = firstPassSolution.peak_wire_voltage_drop_map?.[w.id] ?? null;
+          const steadyCurrent = firstPassSolution.steady_wire_current_map?.[w.hex_id] ?? null;
+          const peakCurrent = firstPassSolution.peak_wire_current_map?.[w.hex_id] ?? null;
+          const steadyDrop = firstPassSolution.steady_wire_voltage_drop_map?.[w.hex_id] ?? null;
+          const peakDrop = firstPassSolution.peak_wire_voltage_drop_map?.[w.hex_id] ?? null;
+          const listTitle = String(w.label || "").trim() || w.id || w.hex_id;
 
           return (
             <div
@@ -235,9 +236,10 @@ export function InspectorView({ editor }: any) {
               }}
               onClick={() => setSelectedWireHexId(w.hex_id)}
             >
-              <div><strong>{w.id}</strong></div>
-              <div style={{ fontSize: 12, marginBottom: 8 }}>
-                {w.from_terminal ?? `[parked:${w.from_terminal_parked ?? "none"}]`} → {w.to_terminal ?? `[parked:${w.to_terminal_parked ?? "none"}]`}
+              <div><strong>{listTitle}</strong></div>
+              
+              <div style={{ fontSize: 11, color: "#64748b", marginBottom: 6 }}>
+                {w.id}
               </div>
 
               {selectedWireHexId === w.hex_id && (
